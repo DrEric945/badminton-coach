@@ -12,12 +12,22 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
-function isTeacher() { try { return localStorage.getItem('swing-coach-role') === 'teacher'; } catch { return false; } }
-function setTeacher(on) {
-  try { if (on) localStorage.setItem('swing-coach-role', 'teacher'); else localStorage.removeItem('swing-coach-role'); } catch { /* 無痕模式 */ }
+const APP_VERSION = 'v6（2026-09-26）';
+function getRole() { try { return localStorage.getItem('swing-coach-role'); } catch { return null; } }
+function isTeacher() { return getRole() === 'teacher'; }
+function setRole(role) {
+  try { localStorage.setItem('swing-coach-role', role); } catch { /* 無痕模式 */ }
   updateRoleBadge();
 }
-function updateRoleBadge() { const b = document.getElementById('roleBadge'); if (b) b.hidden = !isTeacher(); }
+function setTeacher(on) { setRole(on ? 'teacher' : 'student'); }
+function updateRoleBadge() {
+  const b = document.getElementById('roleBadge');
+  if (!b) return;
+  const role = getRole();
+  b.hidden = !role;
+  b.textContent = role === 'teacher' ? '老師' : '學生';
+  b.classList.toggle('student', role !== 'teacher');
+}
 async function hashPw(pw) {
   const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('swing-coach:' + pw));
   return [...new Uint8Array(buf)].map((x) => x.toString(16).padStart(2, '0')).join('');
@@ -57,6 +67,7 @@ function setTab(tab) {
 }
 const TABS = { swing: swingHome, grip: gripHome, library: libraryHome, history: historyHome };
 function route() {
+  if (!getRole()) return welcome();
   const tab = location.hash.slice(1) in TABS ? location.hash.slice(1) : 'swing';
   setTab(tab);
   TABS[tab]();
@@ -65,6 +76,20 @@ window.addEventListener('hashchange', route);
 document.querySelectorAll('.tabbar a').forEach((a) => a.addEventListener('click', (e) => {
   if (location.hash.slice(1) === a.dataset.tab) { e.preventDefault(); route(); }
 }));
+
+function welcome() {
+  setTab('swing');
+  show(
+    head('歡迎使用我的羽球教練', '請先選擇你的身分。之後可以在右上角「設定」切換。'),
+    h('div', { class: 'role-pick' },
+      h('button', { class: 'role-card', type: 'button', onclick: () => { setRole('student'); toast('已設定為學生身分'); location.hash = 'swing'; route(); } },
+        h('strong', {}, '我是學生'),
+        h('span', {}, '匯入老師的示範，錄下自己的揮拍和握拍來比對。')),
+      h('button', { class: 'role-card', type: 'button', onclick: () => teacherLogin() },
+        h('strong', {}, '我是老師'),
+        h('span', {}, '需要老師密碼。可以新增、刪除和匯出示範影片。'))),
+  );
+}
 
 function head(title, sub, back) {
   return h('div', { class: 'screen-head' },
@@ -863,8 +888,7 @@ function teacherLogin() {
   const submit = async () => {
     if (!pw.value) return pw.focus();
     if ((await hashPw(pw.value)) === TEACHER_HASH) {
-      setTeacher(true); close(); toast('已切換為老師身分'); updateRoleBadge();
-route();
+      setTeacher(true); close(); toast('已切換為老師身分'); route();
     } else { err.hidden = false; pw.select(); }
   };
   pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
@@ -872,7 +896,7 @@ route();
     h('div', { class: 'sheet-head' }, h('h2', {}, '老師登入'), btn('取消', close, 'quiet')),
     field('老師密碼', pw), err,
     h('div', { class: 'btn-row one' }, btn('登入', submit)),
-    h('p', { class: 'field-hint' }, '登入後，這台裝置會保持老師身分，直到在設定中登出。')));
+    h('p', { class: 'field-hint' }, '登入後，這台裝置會保持老師身分，直到在設定中切換為學生身分。')));
   document.body.append(dlg);
   dlg.addEventListener('close', () => dlg.remove());
   dlg.showModal();
@@ -1076,16 +1100,16 @@ function openSettings() {
     groupField('身分', isTeacher()
       ? h('div', {}, h('p', { style: { margin: '0 0 8px' } }, '目前是老師身分，可以新增、刪除和匯出示範。'),
         h('div', { class: 'section-actions', style: { margin: 0 } },
-          btn('登出老師身分', () => { setTeacher(false); close(); toast('已切換為學生身分'); route(); }, 'secondary'),
+          btn('切換為學生身分', () => { setTeacher(false); close(); toast('已切換為學生身分'); route(); }, 'secondary'),
           btn('變更老師密碼', () => { close(); changePassword(); }, 'quiet')))
       : h('div', {}, h('p', { style: { margin: '0 0 8px' } }, '目前是學生身分。'),
         btn('老師登入', () => { close(); teacherLogin(); }, 'secondary'))),
     installEvent ? h('div', { class: 'btn-row one' }, btn('安裝到這台裝置', async () => { installEvent.prompt(); await installEvent.userChoice; installEvent = null; close(); })) : null,
+    h('p', { class: 'field-hint' }, `目前版本：${APP_VERSION}`),
     h('div', { class: 'note-box' }, '影片和動作分析都在這台裝置上完成，不會上傳到任何伺服器。第一次使用需要網路下載辨識模型，之後可以離線使用。'),
     h('div', { class: 'section-actions', style: { marginTop: '16px' } }, btn('清除所有資料', async () => {
       if (!confirm('要刪除所有示範與練習紀錄嗎？')) return;
-      await DB.clear('templates'); await DB.clear('history'); close(); updateRoleBadge();
-route();
+      await DB.clear('templates'); await DB.clear('history'); close(); route();
     }, 'danger'))));
   document.body.append(dlg);
   dlg.addEventListener('close', () => dlg.remove());
@@ -1095,7 +1119,14 @@ $('#btnSettings').addEventListener('click', openSettings);
 
 // ───────── 啟動 ─────────
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-  navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service worker 註冊失敗', e));
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+    .then((reg) => reg.update())
+    .catch((e) => console.warn('Service worker 註冊失敗', e));
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (hadController && !reloaded) { reloaded = true; location.reload(); }
+  });
 }
 updateRoleBadge();
 route();

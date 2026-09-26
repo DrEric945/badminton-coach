@@ -1,5 +1,5 @@
 // 離線快取：程式本體預先快取；辨識模型、WASM 與字型第一次使用時快取
-const VERSION = 'swing-coach-v5';
+const VERSION = 'swing-coach-v6';
 const RUNTIME = 'swing-coach-runtime-v1';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
@@ -35,7 +35,7 @@ self.addEventListener('fetch', (e) => {
   }
   if (url.origin === self.location.origin) {
     // 程式本體：先用網路取得最新版，離線時用快取
-    e.respondWith(fetch(req).then((res) => {
+    e.respondWith(fetch(req.url, { cache: 'no-cache' }).then((res) => {
       if (res.ok) { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); }
       return res;
     }).catch(() => caches.match(req, { ignoreSearch: true }).then((r) => r || caches.match('index.html'))));

@@ -39,6 +39,15 @@ img, video, canvas { max-width: 100%; display: block; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: 0.04em; }
 .role-badge { font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--teacher); color: var(--ink); letter-spacing: 0; }
 .role-badge[hidden] { display: none; }
+.role-badge.student { background: #D6E3EF; color: var(--court-deep); }
+.role-pick { display: grid; gap: 12px; }
+.role-card {
+  display: flex; flex-direction: column; gap: 4px; text-align: left; cursor: pointer;
+  padding: 18px 20px; border: 2px solid var(--court); border-radius: var(--radius-m); background: var(--surface);
+}
+.role-card strong { font-size: 20px; color: var(--court); }
+.role-card span { color: var(--muted); }
+.role-card:hover { background: #E2EAF1; }
 .field input[type="password"] { min-height: 46px; padding: 0 12px; border: 2px solid var(--rule); border-radius: var(--radius-s); background: var(--surface); }
 .brand-logo { height: 44px; width: auto; display: block; }
 .icon-btn { background: none; border: 0; padding: 8px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; }
