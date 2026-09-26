@@ -37,6 +37,9 @@ img, video, canvas { max-width: 100%; display: block; }
   padding: 8px 18px; background: var(--paper); border-bottom: 1px solid var(--rule);
 }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 17px; letter-spacing: 0.04em; }
+.role-badge { font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 999px; background: var(--teacher); color: var(--ink); letter-spacing: 0; }
+.role-badge[hidden] { display: none; }
+.field input[type="password"] { min-height: 46px; padding: 0 12px; border: 2px solid var(--rule); border-radius: var(--radius-s); background: var(--surface); }
 .brand-logo { height: 44px; width: auto; display: block; }
 .icon-btn { background: none; border: 0; padding: 8px; border-radius: 50%; cursor: pointer; display: grid; place-items: center; }
 .icon-btn svg { width: 22px; height: 22px; }

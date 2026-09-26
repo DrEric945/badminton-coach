@@ -1,6 +1,7 @@
 import * as V from './vision.js';
 import * as A from './analysis.js';
 import * as DB from './store.js';
+import { TEACHER_HASH } from './config.js';
 import { $, h, toast, sleep, fitCanvas, containMap, drawPose, drawHand, lineChart, segmented, field, groupField, pickFile, fmtScore, cssVar } from './ui.js';
 
 // ───────── 設定 ─────────
@@ -11,6 +12,22 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
+function isTeacher() { try { return localStorage.getItem('swing-coach-role') === 'teacher'; } catch { return false; } }
+function setTeacher(on) {
+  try { if (on) localStorage.setItem('swing-coach-role', 'teacher'); else localStorage.removeItem('swing-coach-role'); } catch { /* 無痕模式 */ }
+  updateRoleBadge();
+}
+function updateRoleBadge() { const b = document.getElementById('roleBadge'); if (b) b.hidden = !isTeacher(); }
+async function hashPw(pw) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('swing-coach:' + pw));
+  return [...new Uint8Array(buf)].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+function requireTeacher() {
+  if (isTeacher()) return true;
+  toast('新增或刪除示範需要老師身分');
+  teacherLogin();
+  return false;
+}
 function saveSettings() { try { localStorage.setItem('swing-coach-settings', JSON.stringify(S)); } catch { /* 無痕模式 */ } }
 
 const ICON = {
@@ -89,7 +106,9 @@ async function swingHome() {
     head('揮拍比對', '選一段老師的示範，再錄下你自己的揮拍，系統會比對關節角度、揮拍軌跡和速度。'),
     list.length
       ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, () => swingPrep(t))))
-      : emptyState('示範庫還沒有揮拍示範', '請老師先到「示範庫」錄一段標準揮拍，或匯入老師分享的示範檔案。', ['新增揮拍示範', () => { setTab('library'); newSwingTemplate(); }]),
+      : isTeacher()
+        ? emptyState('示範庫還沒有揮拍示範', '到「示範庫」錄一段標準揮拍，學生就能開始比對。', ['新增揮拍示範', () => { setTab('library'); newSwingTemplate(); }])
+        : emptyState('還沒有揮拍示範', '請向老師索取示範庫檔案，到「示範庫」匯入後就能開始比對。', ['前往匯入', () => { location.hash = 'library'; }]),
   );
 }
 
@@ -505,7 +524,9 @@ async function gripHome() {
     head('握拍比對', '跟著引導，從兩個角度拍下握拍的手，再做一次手腕轉動。系統會比對手指彎曲、拇指位置和轉動方式。'),
     list.length
       ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, () => gripPrep(t))))
-      : emptyState('示範庫還沒有握拍示範', '請老師先到「示範庫」錄一個標準握拍。', ['新增握拍示範', () => { setTab('library'); newGripTemplate(); }]),
+      : isTeacher()
+        ? emptyState('示範庫還沒有握拍示範', '到「示範庫」錄一個標準握拍，學生就能開始比對。', ['新增握拍示範', () => { setTab('library'); newGripTemplate(); }])
+        : emptyState('還沒有握拍示範', '請向老師索取示範庫檔案，到「示範庫」匯入後就能開始比對。', ['前往匯入', () => { location.hash = 'library'; }]),
   );
 }
 
@@ -803,10 +824,21 @@ function gripResult(tpl, data) {
   );
 }
 
-// ───────── 示範庫（老師端）─────────
+// ───────── 示範庫 ─────────
 async function libraryHome() {
   const list = await templates();
+  if (!isTeacher()) {
+    show(
+      head('示範庫', '這裡是老師提供的標準動作。匯入老師分享的示範檔案後，就能到「揮拍比對」和「握拍比對」練習。'),
+      list.length ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, null, h('span')))) : emptyState('還沒有任何示範', '請向老師索取示範庫檔案（.json），再按下方的「匯入示範庫」。', null),
+      h('div', { class: 'section-actions', style: { marginTop: '18px' } }, btn('匯入示範庫', importLibrary, '', 'upload')),
+      h('div', { class: 'note-box' }, '你自己的揮拍影片請到「揮拍比對」錄影或上傳。新增、刪除示範需要老師身分。'),
+      h('div', { class: 'section-actions', style: { marginTop: '14px' } }, btn('我是老師，登入', teacherLogin, 'quiet')),
+    );
+    return;
+  }
   const rows = list.map((t) => tplRow(t, null, btn('刪除', async () => {
+    if (!requireTeacher()) return;
     if (!confirm(`要刪除「${t.name}」嗎？刪除後無法復原。`)) return;
     await DB.del('templates', t.id); toast('已刪除'); libraryHome();
   }, 'danger')));
@@ -820,6 +852,59 @@ async function libraryHome() {
       btn('匯出示範庫', exportLibrary, 'secondary', 'upload'),
       btn('匯入示範庫', importLibrary, 'secondary')),
   );
+}
+
+// ───────── 老師身分 ─────────
+function teacherLogin() {
+  const dlg = h('dialog', { class: 'sheet' });
+  const pw = h('input', { type: 'password', autocomplete: 'current-password' });
+  const err = h('p', { class: 'field-hint', style: { color: '#B3261E' }, hidden: true }, '密碼不正確，請再試一次。');
+  const close = () => dlg.close();
+  const submit = async () => {
+    if (!pw.value) return pw.focus();
+    if ((await hashPw(pw.value)) === TEACHER_HASH) {
+      setTeacher(true); close(); toast('已切換為老師身分'); updateRoleBadge();
+route();
+    } else { err.hidden = false; pw.select(); }
+  };
+  pw.addEventListener('keydown', (e) => { if (e.key === 'Enter') submit(); });
+  dlg.append(h('div', { class: 'sheet-body' },
+    h('div', { class: 'sheet-head' }, h('h2', {}, '老師登入'), btn('取消', close, 'quiet')),
+    field('老師密碼', pw), err,
+    h('div', { class: 'btn-row one' }, btn('登入', submit)),
+    h('p', { class: 'field-hint' }, '登入後，這台裝置會保持老師身分，直到在設定中登出。')));
+  document.body.append(dlg);
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.showModal();
+  pw.focus();
+}
+
+function changePassword() {
+  const dlg = h('dialog', { class: 'sheet' });
+  const p1 = h('input', { type: 'password', autocomplete: 'new-password' });
+  const p2 = h('input', { type: 'password', autocomplete: 'new-password' });
+  const out = h('div');
+  const close = () => dlg.close();
+  const make = async () => {
+    if (p1.value.length < 8) return toast('密碼至少要 8 個字元');
+    if (p1.value !== p2.value) return toast('兩次輸入的密碼不一樣');
+    const line = `export const TEACHER_HASH = '${await hashPw(p1.value)}';`;
+    const code = h('textarea', { readonly: true, rows: 3, style: { width: '100%', fontSize: '13px', padding: '8px', borderRadius: '4px', border: '2px solid #CBD4D0' } }, line);
+    out.replaceChildren(
+      h('p', {}, '請把 GitHub 上 js/config.js 裡的 TEACHER_HASH 那一行，整行換成下面的內容：'),
+      code,
+      h('div', { class: 'btn-row one' }, btn('複製設定碼', async () => {
+        try { await navigator.clipboard.writeText(line); toast('已複製'); } catch { code.select(); toast('請長按選取後複製'); }
+      })),
+      h('p', { class: 'field-hint' }, '上傳到 GitHub 約 1 到 2 分鐘後生效。已經登入的老師裝置不受影響，新密碼用在下次登入。'));
+  };
+  dlg.append(h('div', { class: 'sheet-body' },
+    h('div', { class: 'sheet-head' }, h('h2', {}, '變更老師密碼'), btn('關閉', close, 'quiet')),
+    field('新密碼', p1, '至少 8 個字元，建議英文加數字'), field('再輸入一次', p2),
+    h('div', { class: 'btn-row one' }, btn('產生設定碼', make)), out));
+  document.body.append(dlg);
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.showModal();
 }
 
 function templateForm(kind, onNext) {
@@ -841,6 +926,7 @@ function templateForm(kind, onNext) {
 }
 
 function newSwingTemplate() {
+  if (!requireTeacher()) return;
   const { formEls, collect } = templateForm('swing');
   const go = (fromCamera) => async () => {
     const meta = collect(); if (!meta) return;
@@ -883,6 +969,7 @@ function teacherReview(meta, d, blob, series, seg, poster) {
     h('div', { class: 'note-box' }, '如果骨架播放的不是完整揮拍，請返回重新選取片段，讓影片只包含一次揮拍。'),
     h('div', { class: 'btn-row' },
       btn('儲存示範', async () => {
+        if (!requireTeacher()) return;
         await DB.put('templates', { id: DB.uid(), type: 'swing', ...meta, frames: d.frames, ar: d.ar, video: blob, poster, fps: S.fps, createdAt: Date.now() });
         toast('已儲存示範'); setTab('library'); libraryHome();
       }),
@@ -892,6 +979,7 @@ function teacherReview(meta, d, blob, series, seg, poster) {
 }
 
 function newGripTemplate() {
+  if (!requireTeacher()) return;
   const { formEls, collect } = templateForm('grip');
   show(
     head('新增握拍示範', '接下來會依序拍兩個角度的握拍照片，再錄一段手腕轉動。學生比對時會看到這些照片當作參考。', libraryHome),
@@ -901,6 +989,7 @@ function newGripTemplate() {
       gripCapture({
         title: '錄製握拍示範', tpl: null, hand: meta.hand, role: 'teacher', back: newGripTemplate,
         onDone: async (grip) => {
+          if (!requireTeacher()) return;
           await DB.put('templates', { id: DB.uid(), type: 'grip', ...meta, view: null, grip, poster: grip.views.back?.snap || grip.views.thumb?.snap || null, createdAt: Date.now() });
           toast('已儲存示範'); setTab('library'); libraryHome();
         },
@@ -912,6 +1001,7 @@ function newGripTemplate() {
 const blobToDataURL = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
 
 async function exportLibrary() {
+  if (!requireTeacher()) return;
   const list = await templates();
   if (!list.length) return toast('示範庫是空的');
   toast('正在打包示範庫…');
@@ -983,11 +1073,19 @@ function openSettings() {
     h('p', { class: 'field-hint', style: { marginTop: '-8px' } }, '揮拍很快時選 60 較準，但分析時間加倍，影片本身也要是 60fps。'),
     groupField('我的持拍手', segmented(HANDS, S.hand, (v) => { S.hand = v; saveSettings(); }, '我的持拍手')),
     groupField('預設鏡頭', segmented([['user', '前鏡頭'], ['environment', '後鏡頭']], S.facing, (v) => { S.facing = v; saveSettings(); }, '預設鏡頭')),
+    groupField('身分', isTeacher()
+      ? h('div', {}, h('p', { style: { margin: '0 0 8px' } }, '目前是老師身分，可以新增、刪除和匯出示範。'),
+        h('div', { class: 'section-actions', style: { margin: 0 } },
+          btn('登出老師身分', () => { setTeacher(false); close(); toast('已切換為學生身分'); route(); }, 'secondary'),
+          btn('變更老師密碼', () => { close(); changePassword(); }, 'quiet')))
+      : h('div', {}, h('p', { style: { margin: '0 0 8px' } }, '目前是學生身分。'),
+        btn('老師登入', () => { close(); teacherLogin(); }, 'secondary'))),
     installEvent ? h('div', { class: 'btn-row one' }, btn('安裝到這台裝置', async () => { installEvent.prompt(); await installEvent.userChoice; installEvent = null; close(); })) : null,
     h('div', { class: 'note-box' }, '影片和動作分析都在這台裝置上完成，不會上傳到任何伺服器。第一次使用需要網路下載辨識模型，之後可以離線使用。'),
     h('div', { class: 'section-actions', style: { marginTop: '16px' } }, btn('清除所有資料', async () => {
       if (!confirm('要刪除所有示範與練習紀錄嗎？')) return;
-      await DB.clear('templates'); await DB.clear('history'); close(); route();
+      await DB.clear('templates'); await DB.clear('history'); close(); updateRoleBadge();
+route();
     }, 'danger'))));
   document.body.append(dlg);
   dlg.addEventListener('close', () => dlg.remove());
@@ -999,4 +1097,5 @@ $('#btnSettings').addEventListener('click', openSettings);
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   navigator.serviceWorker.register('sw.js').catch((e) => console.warn('Service worker 註冊失敗', e));
 }
+updateRoleBadge();
 route();
