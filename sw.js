@@ -1,5 +1,5 @@
 // 離線快取：程式本體預先快取；辨識模型、WASM 與字型第一次使用時快取
-const VERSION = 'swing-coach-v3';
+const VERSION = 'swing-coach-v4';
 const RUNTIME = 'swing-coach-runtime-v1';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
