@@ -371,6 +371,14 @@ export function racketAngle(view, hand = 'R') {
   return Math.atan2(H[0] * R[1] - H[1] * R[0], H[0] * R[0] + H[1] * R[1]) * R2D;
 }
 
+// 握把頭（握把尾端）到手腕的距離，以手掌長度為單位；越大代表握得越靠上
+export function buttDistance(view) {
+  if (!view || !view.racket || !view.racket.butt) return null;
+  const ar = view.ar || 1, i = view.hi, b = view.racket.butt;
+  const palm = Math.hypot((i[27] - i[0]) * ar, i[28] - i[1]) || 1e-6;
+  return Math.hypot((b[0] - i[0]) * ar, b[1] - i[1]) / palm;
+}
+
 export function averageHand(frames) {
   const n = frames.length;
   const acc = (key) => frames[0][key].map((_, k) => frames.reduce((s, f) => s + f[key][k], 0) / n);
@@ -409,7 +417,7 @@ export function compareGrip(teacher, student) {
   if (!views.length && !(teacher.rotation && student.rotation)) throw new Error('沒有可以比對的握拍資料。');
   const perView = [];
   const improve = [], good = [];
-  const flexAbs = [], thumbScores = [], spreadAbs = [], racketAbs = [];
+  const flexAbs = [], thumbScores = [], spreadAbs = [], racketAbs = [], buttAbs = [];
   const fingerSigned = {};
   const byKey = new Map();
   const addV = (key, v, sev, text, detail) => { if (!byKey.has(key)) byKey.set(key, []); byKey.get(key).push({ v, sev, text, detail }); };
@@ -428,7 +436,12 @@ export function compareGrip(teacher, student) {
     spreadAbs.push(Math.abs(d.spread));
     const ra = racketAngle(T, teacher.hand), rb = racketAngle(S, student.hand);
     let racket = null;
-    if (ra != null && rb != null) { racket = { t: ra, s: rb, diff: wrap180(rb - ra) }; racketAbs.push(Math.abs(racket.diff)); }
+    if (ra != null && rb != null) {
+      racket = { t: ra, s: rb, diff: wrap180(rb - ra) };
+      racketAbs.push(Math.abs(racket.diff));
+      const bT = buttDistance(T), bS = buttDistance(S);
+      if (bT != null && bS != null) { racket.buttT = bT; racket.buttS = bS; racket.buttDiff = bS - bT; buttAbs.push(Math.abs(bS - bT)); }
+    }
     const viewAngle = angBetween(palmNormalImg(T.hi, T.ar, teacher.hand), palmNormalImg(S.hi, S.ar, student.hand));
     perView.push({ view: v, name: VIEW_NAMES[v], d, tf, sf, racket, viewAngle });
     if (viewAngle > 40) improve.push({ sev: 5, text: `${VIEW_NAMES[v]}的拍攝方向和示範差約 ${Math.round(viewAngle)}°，比對結果可能不準`, detail: '請參考示範照片，把手轉到相同方向再拍一次' });
@@ -437,7 +450,9 @@ export function compareGrip(teacher, student) {
     if (Math.abs(d.thDir) > 15) addV('thDir' + Math.sign(d.thDir), v, Math.abs(d.thDir) * 0.8, `拇指方向和示範差約 ${Math.round(Math.abs(d.thDir))}°`, d.thDir > 0 ? '拇指比示範更往外張開' : '拇指比示範更往手指方向收');
     if (d.spread < -8) addV('spread-', v, -d.spread, '食指和中指靠得比示範近', '食指可以稍微往前分開，像扣扳機的位置');
     else if (d.spread > 8) addV('spread+', v, d.spread, '食指張得比示範開', '食指可以收回來一些');
-    if (racket && Math.abs(racket.diff) > 10) addV('racket', v, Math.abs(racket.diff) * 1.2, `球拍和手的夾角與示範差 ${Math.round(Math.abs(racket.diff))}°`, '拍柄在手中的角度不同，檢查虎口對準的位置');
+    if (racket && Math.abs(racket.diff) > 10) addV('racket', v, Math.abs(racket.diff) * 1.2, `握把和手的夾角與示範差 ${Math.round(Math.abs(racket.diff))}°`, '握把在手中的角度不同，檢查虎口對準的位置');
+    if (racket && racket.buttDiff > 0.25) addV('butt+', v, racket.buttDiff * 40, '握的位置比示範高（握把頭露出較多）', '手可以往握把頭的方向移一些');
+    else if (racket && racket.buttDiff < -0.25) addV('butt-', v, -racket.buttDiff * 40, '握的位置比示範低（太靠近握把頭）', '手可以往上握一些');
   }
   for (const items of byKey.values()) {
     const best = items.reduce((a, b) => (b.sev > a.sev ? b : a));
@@ -455,7 +470,11 @@ export function compareGrip(teacher, student) {
     parts.push({ key: 'flex', label: '手指彎曲', w: 0.3, score: scoreLinear(mean(flexAbs), 8, 40) });
     parts.push({ key: 'thumb', label: '拇指位置', w: 0.25, score: mean(thumbScores) });
     parts.push({ key: 'spread', label: '食指張開', w: 0.1, score: scoreLinear(mean(spreadAbs), 5, 30) });
-    if (racketAbs.length) parts.push({ key: 'racket', label: '球拍夾角', w: 0.15, score: scoreLinear(mean(racketAbs), 6, 35) });
+    if (racketAbs.length) {
+      const angleScore = scoreLinear(mean(racketAbs), 6, 35);
+      const posScore = buttAbs.length ? scoreLinear(mean(buttAbs), 0.1, 0.6) : angleScore;
+      parts.push({ key: 'racket', label: '握把方向', w: 0.2, score: 0.6 * angleScore + 0.4 * posScore });
+    }
   }
   let rotation = null;
   if (teacher.rotation && student.rotation && teacher.rotation.frames.length > 10 && student.rotation.frames.length > 10) {

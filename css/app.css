@@ -191,6 +191,12 @@ h2 { font-size: 18px; margin: 28px 0 10px; }
 /* 進度 */
 .progress { height: 8px; background: #D4DCD8; border-radius: 99px; overflow: hidden; margin-top: 14px; }
 .progress > div { height: 100%; width: 0; background: var(--court); transition: width 0.15s; }
+.progress .indeterminate { width: 35%; animation: indet 1.2s ease-in-out infinite; }
+@keyframes indet { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+.row-actions { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.row-actions .btn { min-height: 36px; padding: 0 12px; font-size: 14px; }
+.chip.pub { background: #D3EBDD; color: #145C3C; }
+.chip.unpub { background: #FBE3CF; color: #7A3B00; }
 .progress-text { margin-top: 6px; color: var(--muted); font-size: 14px; }
 
 /* 修剪 */

@@ -2,6 +2,7 @@ import * as V from './vision.js';
 import * as A from './analysis.js';
 import * as DB from './store.js';
 import { TEACHER_HASH } from './config.js';
+import * as L from './library.js';
 import { $, h, toast, sleep, fitCanvas, containMap, drawPose, drawHand, lineChart, segmented, field, groupField, pickFile, fmtScore, cssVar } from './ui.js';
 
 // ───────── 設定 ─────────
@@ -12,7 +13,7 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
-const APP_VERSION = 'v6（2026-09-26）';
+const APP_VERSION = 'v7（2026-09-26）';
 function getRole() { try { return localStorage.getItem('swing-coach-role'); } catch { return null; } }
 function isTeacher() { return getRole() === 'teacher'; }
 function setRole(role) {
@@ -34,7 +35,7 @@ async function hashPw(pw) {
 }
 function requireTeacher() {
   if (isTeacher()) return true;
-  toast('新增或刪除示範需要老師身分');
+  toast('新增或刪除示範影片需要老師身分');
   teacherLogin();
   return false;
 }
@@ -84,10 +85,10 @@ function welcome() {
     h('div', { class: 'role-pick' },
       h('button', { class: 'role-card', type: 'button', onclick: () => { setRole('student'); toast('已設定為學生身分'); location.hash = 'swing'; route(); } },
         h('strong', {}, '我是學生'),
-        h('span', {}, '匯入老師的示範，錄下自己的揮拍和握拍來比對。')),
+        h('span', {}, '選老師的示範影片，錄下自己的揮拍和握拍來比對。')),
       h('button', { class: 'role-card', type: 'button', onclick: () => teacherLogin() },
         h('strong', {}, '我是老師'),
-        h('span', {}, '需要老師密碼。可以新增、刪除和匯出示範影片。'))),
+        h('span', {}, '需要老師密碼。可以新增、刪除和發布示範影片。'))),
   );
 }
 
@@ -116,9 +117,43 @@ function tplRow(t, onclick, extra) {
   if (onclick) return h('button', { class: 'tpl-row', type: 'button', onclick }, body, h('span', { class: 'tpl-go', html: ICON.go }));
   return h('div', { class: 'tpl-row', style: { cursor: 'default' } }, body, extra || h('span'));
 }
+// 示範清單：以共享示範影片庫為準，這台裝置只存下載過的暫存
+let libraryOffline = false;
 async function templates(type) {
-  const list = await DB.all('templates');
+  const local = await DB.all('templates').catch(() => []);
+  let index = null;
+  try { index = await L.fetchIndex(); libraryOffline = false; } catch (e) { console.warn('讀取示範影片庫失敗', e); libraryOffline = true; }
+  let list;
+  if (index) {
+    const byId = new Map(index.templates.map((e) => [e.id, e]));
+    for (const t of local) {
+      if (t.remote && (!byId.has(t.id) || byId.get(t.id).rev !== t.rev)) await DB.del('templates', t.id).catch(() => {});
+    }
+    list = index.templates.map((e) => ({ ...e, _state: 'remote' }));
+    if (isTeacher()) local.filter((t) => !t.remote && !byId.has(t.id)).forEach((t) => list.push({ ...t, _state: 'local' }));
+  } else {
+    list = local.filter((t) => t.remote || isTeacher()).map((t) => ({ ...t, _state: t.remote ? 'remote' : 'local' }));
+  }
   return list.filter((t) => !type || t.type === type).sort((a, b) => b.createdAt - a.createdAt);
+}
+function offlineNote() {
+  return libraryOffline ? h('div', { class: 'note-box warn', style: { marginBottom: '14px' } }, '目前連不上示範影片庫，顯示的是這台裝置之前下載過的示範。') : null;
+}
+async function openEntry(entry, next, back) {
+  const cached = await DB.get('templates', entry.id).catch(() => null);
+  if (cached && (cached.frames || cached.grip) && (entry._state === 'local' || !entry.rev || cached.rev === entry.rev)) return next(cached);
+  const txt = h('p', { class: 'progress-text' }, '下載示範中…');
+  show(head(entry.name, null, back), h('div', { class: 'progress' }, h('div', { class: 'indeterminate' })), txt);
+  let cancelled = false;
+  onLeave(() => { cancelled = true; });
+  try {
+    const full = await L.fetchTemplate(entry, (m) => { txt.textContent = m; });
+    await DB.put('templates', full).catch(console.warn);
+    if (!cancelled) next(full);
+  } catch (e) {
+    console.error(e);
+    if (!cancelled) errorScreen('無法下載示範', `請確認網路連線後再試一次。（${e.message}）`, back);
+  }
 }
 function errorScreen(title, msg, back) {
   show(head(title, null, back), h('div', { class: 'note-box warn' }, msg));
@@ -129,11 +164,12 @@ async function swingHome() {
   const list = await templates('swing');
   show(
     head('揮拍比對', '選一段老師的示範，再錄下你自己的揮拍，系統會比對關節角度、揮拍軌跡和速度。'),
+    offlineNote(),
     list.length
-      ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, () => swingPrep(t))))
+      ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, () => openEntry(t, swingPrep, swingHome))))
       : isTeacher()
-        ? emptyState('示範庫還沒有揮拍示範', '到「示範庫」錄一段標準揮拍，學生就能開始比對。', ['新增揮拍示範', () => { setTab('library'); newSwingTemplate(); }])
-        : emptyState('還沒有揮拍示範', '請向老師索取示範庫檔案，到「示範庫」匯入後就能開始比對。', ['前往匯入', () => { location.hash = 'library'; }]),
+        ? emptyState('還沒有揮拍示範', '到「示範影片庫」錄一段標準揮拍並發布，學生就能開始比對。', ['新增揮拍示範', () => { setTab('library'); newSwingTemplate(); }])
+        : emptyState('老師還沒有上傳揮拍示範', '老師發布示範後，大約 1 分鐘內就會出現在這裡。', ['重新整理', swingHome]),
   );
 }
 
@@ -546,13 +582,25 @@ async function swingResult(tpl, stu) {
 async function gripHome() {
   const list = await templates('grip');
   show(
-    head('握拍比對', '跟著引導，從兩個角度拍下握拍的手，再做一次手腕轉動。系統會比對手指彎曲、拇指位置和轉動方式。'),
+    head('握拍比對', '跟著引導，從兩個角度拍下握拍的手，並標出握把頭的位置。系統會比對手指彎曲、拇指位置和握把方向。手腕轉動提供老師的示範影片觀看。'),
+    offlineNote(),
     list.length
-      ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, () => gripPrep(t))))
+      ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, () => openEntry(t, gripPrep, gripHome))))
       : isTeacher()
-        ? emptyState('示範庫還沒有握拍示範', '到「示範庫」錄一個標準握拍，學生就能開始比對。', ['新增握拍示範', () => { setTab('library'); newGripTemplate(); }])
-        : emptyState('還沒有握拍示範', '請向老師索取示範庫檔案，到「示範庫」匯入後就能開始比對。', ['前往匯入', () => { location.hash = 'library'; }]),
+        ? emptyState('還沒有握拍示範', '到「示範影片庫」錄一個標準握拍並發布，學生就能開始比對。', ['新增握拍示範', () => { setTab('library'); newGripTemplate(); }])
+        : emptyState('老師還沒有上傳握拍示範', '老師發布示範後，大約 1 分鐘內就會出現在這裡。', ['重新整理', gripHome]),
   );
+}
+
+function demoVideoBlock(tpl) {
+  if (!tpl.demoVideo) return null;
+  const url = URL.createObjectURL(tpl.demoVideo);
+  onLeaveLater(() => URL.revokeObjectURL(url));
+  return [
+    h('h2', {}, '手腕轉動示範'),
+    h('p', { class: 'field-hint' }, '這段是老師的示範影片，僅供觀看，不列入比對。'),
+    h('div', { class: 'stage tall' }, h('video', { class: 'stage-media', src: url, muted: true, playsInline: true, loop: true, controls: true }), h('div', { class: 'stage-tag' }, '示範')),
+  ];
 }
 
 function gripPrep(tpl) {
@@ -563,7 +611,9 @@ function gripPrep(tpl) {
     h('ul', { class: 'guide' },
       h('li', {}, '手機固定在和手差不多高的位置，手距離鏡頭約 40 到 60 公分。'),
       h('li', {}, '光線要充足，背景越單純越好。'),
-      h('li', {}, '每個角度會顯示老師的示範照片，照著擺好後保持不動，系統會自動拍下。')),
+      h('li', {}, '每個角度會顯示老師的示範照片，照著擺好後保持不動，系統會自動拍下。'),
+      h('li', {}, '拍下後在照片上點出握把頭（握把尾端）和握把上端，比對握把的方向和握的位置。')),
+    demoVideoBlock(tpl),
     groupField('你的持拍手', segmented(HANDS, S.hand, (v) => { S.hand = v; saveSettings(); }, '你的持拍手')),
     h('div', { class: 'btn-row one' }, btn('開始握拍比對', () => gripCapture({
       title: '握拍比對', tpl, hand: S.hand, role: 'student', back: () => gripPrep(tpl),
@@ -572,10 +622,10 @@ function gripPrep(tpl) {
   );
 }
 
-const GRIP_STEPS = [
+const GRIP_STEPS_ALL = [
   { key: 'back', short: '手背', title: '角度一：手背朝向鏡頭', text: '握好球拍，拍頭朝上，手背正對鏡頭，手放在畫面中央。保持不動，系統會自動拍下。' },
   { key: 'thumb', short: '拇指側', title: '角度二：拇指側朝向鏡頭', text: '維持同樣的握法，把手轉 90 度，讓拇指那一側朝向鏡頭，拍頭仍然朝上。' },
-  { key: 'rotate', short: '手腕轉動', title: '手腕轉動', text: '手臂往前伸、手肘不動，只轉動前臂：拍面向一側轉到底，再轉向另一側，來回兩次。按下開始後倒數 3 秒，錄 5 秒。' },
+  { key: 'rotate', short: '手腕轉動', title: '錄製手腕轉動示範', text: '手臂往前伸、手肘不動，只轉動前臂：拍面向一側轉到底，再轉向另一側，來回兩次。按下開始後倒數 3 秒，錄 5 秒。這段影片只提供學生觀看，不列入比對。' },
 ];
 
 function holdRing() {
@@ -586,8 +636,9 @@ function holdRing() {
 }
 
 async function gripCapture({ title, tpl, hand, role, back, onDone }) {
-  const data = { hand, views: {}, rotation: null };
+  const data = { hand, views: {}, rotationVideo: null };
   const ref = tpl && tpl.grip;
+  const GRIP_STEPS = role === 'teacher' ? GRIP_STEPS_ALL : GRIP_STEPS_ALL.filter((s) => s.key !== 'rotate');
   let si = 0;
   const stepsBar = h('div', { class: 'steps' }, GRIP_STEPS.map((s) => h('span', {}, s.short)));
   const stepBox = h('div', { class: 'step-box' });
@@ -603,7 +654,7 @@ async function gripCapture({ title, tpl, hand, role, back, onDone }) {
   show(head(title, null, back), stepsBar, stepBox, stage, controls, h('div', { class: 'controls' }, flipBtn));
 
   let stream = null, lm = null, running = true, mode = 'idle', prev = null, stableSince = 0, buf = [], last = null;
-  let rotFrames = [], rotStart = 0, marks = [], markView = null, busy = false, confirmBtn = null;
+  let rotStart = 0, marks = [], markView = null, busy = false, confirmBtn = null;
   onLeave(() => { running = false; V.stopStream(stream); });
   stage.addEventListener('click', (e) => onMarkTap(e));
 
@@ -622,7 +673,7 @@ async function gripCapture({ title, tpl, hand, role, back, onDone }) {
   requestAnimationFrame(loop);
 
   function renderStep() {
-    while (si < GRIP_STEPS.length && role === 'student' && ref && (GRIP_STEPS[si].key === 'rotate' ? !ref.rotation : !ref.views[GRIP_STEPS[si].key])) si++;
+    while (si < GRIP_STEPS.length && role === 'student' && ref && !ref.views[GRIP_STEPS[si].key]) si++;
     if (si >= GRIP_STEPS.length) return finish();
     [...stepsBar.children].forEach((el, k) => { el.setAttribute('aria-current', k === si ? 'step' : 'false'); el.classList.toggle('done', k < si); });
     const st = GRIP_STEPS[si];
@@ -678,9 +729,7 @@ async function gripCapture({ title, tpl, hand, role, back, onDone }) {
       } else { stableSince = 0; buf = []; ring.set(0); setHint('手放穩，保持不動就會自動拍下'); }
     } else if (mode === 'rotating') {
       const t = (now - rotStart) / 1000;
-      if (r) rotFrames.push({ t, i: r.i, w: r.w });
       setHint(`錄製中，剩 ${Math.max(0, 5 - t).toFixed(1)} 秒`, true);
-      if (t >= 5) endRotate();
     } else if (mode === 'rotate-wait' && !r) {
       setHint('把握拍的手放到畫面中央');
     }
@@ -716,21 +765,21 @@ async function gripCapture({ title, tpl, hand, role, back, onDone }) {
     drawMark(); markStatus();
   }
   function markStatus() {
-    if (marks.length === 0) setHint('點一下拍頭的中心');
-    else if (marks.length === 1) setHint('再點一下拍柄的尾端');
-    else setHint('確認線條和球拍對齊', true);
+    if (marks.length === 0) setHint('點一下握把頭（握把尾端）');
+    else if (marks.length === 1) setHint('再點一下握把上端（和拍桿交接處）');
+    else setHint('確認線條和握把對齊', true);
     confirmBtn.disabled = marks.length < 2;
   }
   function startMark(view) {
     mode = 'mark'; markView = view; marks = [];
     stage.classList.remove('mirror');
     img.src = view.snap; img.hidden = false; video.style.visibility = 'hidden';
-    stepBox.replaceChildren(h('div', {}, h('h2', {}, '標出球拍方向'),
-      h('p', {}, '在照片上先點拍頭中心、再點拍柄尾端，系統就能算出球拍和手的夾角。看不到球拍可以略過。')));
-    confirmBtn = btn('確認', () => { markView.racket = { head: marks[0], butt: marks[1] }; endMark(); finishView(markView); });
+    stepBox.replaceChildren(h('div', {}, h('h2', {}, '標出握把位置'),
+      h('p', {}, '在照片上先點握把頭（握把最尾端），再點握把上端和拍桿交接的地方。系統會算出握把的方向和握的位置高低。看不到握把可以略過。')));
+    confirmBtn = btn('確認', () => { markView.racket = { butt: marks[0], head: marks[1] }; endMark(); finishView(markView); });
     controls.replaceChildren(confirmBtn,
       btn('重新標記', () => { marks = []; drawMark(); markStatus(); }, 'secondary'),
-      btn('不標球拍', () => { endMark(); finishView(markView); }, 'quiet'),
+      btn('不標握把', () => { endMark(); finishView(markView); }, 'quiet'),
       btn('重拍這個角度', () => { endMark(); renderStep(); }, 'quiet'));
     requestAnimationFrame(drawMark);
     markStatus();
@@ -750,20 +799,29 @@ async function gripCapture({ title, tpl, hand, role, back, onDone }) {
     count.hidden = false;
     for (let n = 3; n > 0; n--) { count.textContent = n; await sleep(800); if (!running) return; }
     count.hidden = true;
-    rotFrames = []; rotStart = performance.now(); mode = 'rotating';
-  }
-  function endRotate() {
+    const mime = V.pickMime();
+    let rec = null;
+    try { rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 4_000_000 } : undefined); }
+    catch { try { rec = new MediaRecorder(stream); } catch { toast('這個瀏覽器不支援錄影'); return renderStep(); } }
+    const chunks = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+    const stopped = new Promise((res) => { rec.onstop = res; });
+    rec.start(250);
+    rotStart = performance.now(); mode = 'rotating';
+    stage.classList.add('recording');
+    await sleep(5000);
+    if (rec.state !== 'inactive') rec.stop();
+    await stopped;
+    stage.classList.remove('recording');
+    if (!running) return;
     mode = 'idle';
-    if (rotFrames.length < 30) {
-      toast('錄製期間很少偵測到手，請讓手留在畫面中再錄一次');
-      return renderStep();
-    }
-    data.rotation = { frames: rotFrames };
+    data.rotationVideo = new Blob(chunks, { type: rec.mimeType || mime || 'video/webm' });
+    toast('已錄下手腕轉動示範');
     si++; renderStep();
   }
   function finish() {
     mode = 'idle';
-    if (!Object.keys(data.views).length && !data.rotation) {
+    if (!Object.keys(data.views).length && !data.rotationVideo) {
       toast('至少要完成一個步驟');
       si = 0; return renderStep();
     }
@@ -785,6 +843,8 @@ function snapCanvas(view, hand, color, tag) {
       const a = map(...view.racket.head), b = map(...view.racket.butt);
       ctx.strokeStyle = cssVar(color); ctx.lineWidth = 4 * dpr; ctx.setLineDash([8 * dpr, 6 * dpr]);
       ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+      ctx.setLineDash([]); ctx.fillStyle = cssVar(color);
+      ctx.beginPath(); ctx.arc(b[0], b[1], 7 * dpr, 0, Math.PI * 2); ctx.fill();
     }
   };
   im.addEventListener('load', draw);
@@ -814,29 +874,11 @@ function gripResult(tpl, data) {
       h('thead', {}, h('tr', {}, h('th', {}, '項目'), h('th', { class: 'num' }, '示範'), h('th', { class: 'num' }, '你'), h('th', { class: 'num' }, '差異'))),
       h('tbody', {},
         JOINT_ROWS.map(([k, l]) => h('tr', {}, h('td', {}, l), h('td', { class: 'num' }, Math.round(pv.tf[k]) + '°'), h('td', { class: 'num' }, Math.round(pv.sf[k]) + '°'), h('td', { class: 'num' }, (pv.d[k] > 0 ? '+' : '') + Math.round(pv.d[k]) + '°'))),
-        pv.racket ? h('tr', {}, h('td', {}, '球拍與手的夾角'), h('td', { class: 'num' }, Math.round(pv.racket.t) + '°'), h('td', { class: 'num' }, Math.round(pv.racket.s) + '°'), h('td', { class: 'num' }, (pv.racket.diff > 0 ? '+' : '') + Math.round(pv.racket.diff) + '°')) : null))),
+        pv.racket ? h('tr', {}, h('td', {}, '握把與手的夾角'), h('td', { class: 'num' }, Math.round(pv.racket.t) + '°'), h('td', { class: 'num' }, Math.round(pv.racket.s) + '°'), h('td', { class: 'num' }, (pv.racket.diff > 0 ? '+' : '') + Math.round(pv.racket.diff) + '°')) : null,
+        pv.racket && pv.racket.buttT != null ? h('tr', {}, h('td', {}, '握把頭到手腕距離（手掌長倍數）'), h('td', { class: 'num' }, pv.racket.buttT.toFixed(2)), h('td', { class: 'num' }, pv.racket.buttS.toFixed(2)), h('td', { class: 'num' }, (pv.racket.buttDiff > 0 ? '+' : '') + pv.racket.buttDiff.toFixed(2))) : null))),
   ]);
 
-  let rotEl = null;
-  if (R.rotation) {
-    const chart = h('canvas', {});
-    const resample = (r) => Array.from({ length: 100 }, (_, k) => {
-      const tt = (k / 99) * r.t[r.t.length - 1];
-      let j = 0; while (j < r.t.length - 1 && r.t[j + 1] < tt) j++;
-      return r.theta[j];
-    });
-    const draw = () => lineChart(chart, { series: [
-      { data: resample(R.rotation.rT), color: cssVar('--teacher') },
-      { data: resample(R.rotation.rS), color: cssVar('--student') }] });
-    const ro = new ResizeObserver(draw); ro.observe(chart); onLeaveLater(() => ro.disconnect());
-    rotEl = [
-      h('h2', {}, '手腕轉動'),
-      h('div', { class: 'chart-box' },
-        h('div', { class: 'legend' }, h('span', {}, h('i', { style: { background: cssVar('--teacher') } }), '示範'), h('span', {}, h('i', { style: { background: cssVar('--student') } }), '你')),
-        chart,
-        h('p', { class: 'field-hint' }, `轉動幅度：示範 ${Math.round(R.rotation.rT.range)}°，你 ${Math.round(R.rotation.rS.range)}°。轉動速度：示範 ${Math.round(R.rotation.rT.peakVel)}°/秒，你 ${Math.round(R.rotation.rS.peakVel)}°/秒。`)),
-    ];
-  }
+  const rotEl = demoVideoBlock(tpl);
 
   show(
     head('握拍比對結果', tpl.name, () => gripPrep(tpl)),
@@ -844,39 +886,121 @@ function gripResult(tpl, data) {
     h('h2', {}, '需要調整的地方'), notesList(R.improve, false),
     h('h2', {}, '做得好的地方'), notesList(R.good, true),
     views, rotEl,
-    h('div', { class: 'note-box' }, '系統只看得到手部的關節，看不到拍柄的稜面。若要區分網球東方式、西方式這類細微差異，請一定要標出球拍方向，或請老師在旁確認。'),
+    h('div', { class: 'note-box' }, '系統只看得到手部的關節，看不到拍柄的稜面。要比較握把的角度和握的位置，請記得標出握把頭；細微的差異仍建議請老師在旁確認。'),
     h('div', { class: 'btn-row' }, btn('再做一次', () => gripPrep(tpl)), btn('換一個示範', gripHome, 'secondary')),
   );
 }
 
-// ───────── 示範庫 ─────────
+// ───────── 示範影片庫 ─────────
 async function libraryHome() {
   const list = await templates();
+  const openT = (t) => openEntry(t, t.type === 'swing' ? swingPrep : gripPrep, libraryHome);
   if (!isTeacher()) {
     show(
-      head('示範庫', '這裡是老師提供的標準動作。匯入老師分享的示範檔案後，就能到「揮拍比對」和「握拍比對」練習。'),
-      list.length ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, null, h('span')))) : emptyState('還沒有任何示範', '請向老師索取示範庫檔案（.json），再按下方的「匯入示範庫」。', null),
-      h('div', { class: 'section-actions', style: { marginTop: '18px' } }, btn('匯入示範庫', importLibrary, '', 'upload')),
-      h('div', { class: 'note-box' }, '你自己的揮拍影片請到「揮拍比對」錄影或上傳。新增、刪除示範需要老師身分。'),
-      h('div', { class: 'section-actions', style: { marginTop: '14px' } }, btn('我是老師，登入', teacherLogin, 'quiet')),
+      head('示範影片庫', '老師發布的標準動作都在這裡，每位同學看到的內容都一樣。點一下就能開始比對。'),
+      offlineNote(),
+      list.length ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, () => openT(t))))
+        : emptyState('老師還沒有發布示範', '老師發布示範後，大約 1 分鐘內就會出現在這裡。', ['重新整理', libraryHome]),
+      h('div', { class: 'note-box' }, '你自己的揮拍影片請到「揮拍比對」錄影或上傳。新增、刪除示範影片需要老師身分。'),
+      h('div', { class: 'section-actions', style: { marginTop: '14px' } }, list.length ? btn('重新整理', libraryHome, 'secondary') : null, btn('我是老師，登入', teacherLogin, 'quiet')),
     );
     return;
   }
-  const rows = list.map((t) => tplRow(t, null, btn('刪除', async () => {
-    if (!requireTeacher()) return;
-    if (!confirm(`要刪除「${t.name}」嗎？刪除後無法復原。`)) return;
-    await DB.del('templates', t.id); toast('已刪除'); libraryHome();
-  }, 'danger')));
+  const hasToken = !!L.getToken();
+  const rows = list.map((t) => tplRow(t, null, h('div', { class: 'row-actions' },
+    h('span', { class: 'chip ' + (t._state === 'remote' ? 'pub' : 'unpub') }, t._state === 'remote' ? '已發布' : '尚未發布'),
+    t._state === 'local' ? btn('發布', () => publishFlow(t.id), 'secondary') : null,
+    btn('刪除', () => deleteFlow(t), 'danger'))));
   show(
-    head('示範庫', '老師在這裡建立標準動作，學生比對時會從這裡挑選。'),
+    head('示範影片庫', '老師在這裡新增標準動作。發布後，所有學生打開網頁都會看到同樣的示範。'),
+    !hasToken ? h('div', { class: 'note-box warn', style: { marginBottom: '14px' } },
+      h('p', { style: { margin: '0 0 10px' } }, '還沒有設定共享示範影片庫。現在新增的示範只會存在這台裝置，學生看不到。'),
+      btn('設定 GitHub 權杖', tokenDialog, 'secondary')) : null,
+    offlineNote(),
     h('div', { class: 'section-actions' }, btn('新增揮拍示範', newSwingTemplate, '', 'camera'), btn('新增握拍示範', newGripTemplate, 'secondary')),
-    list.length ? h('div', { class: 'tpl-list' }, rows) : emptyState('還沒有任何示範', '先錄一段標準揮拍或握拍，學生就能開始比對。', null),
-    h('h2', {}, '分享示範庫'),
-    h('p', { class: 'field-hint' }, '把示範庫匯出成一個檔案傳給學生，學生匯入後就能在自己的裝置上比對。所有資料都只存在這台裝置上。'),
-    h('div', { class: 'section-actions' },
-      btn('匯出示範庫', exportLibrary, 'secondary', 'upload'),
-      btn('匯入示範庫', importLibrary, 'secondary')),
+    list.length ? h('div', { class: 'tpl-list' }, rows) : emptyState('還沒有任何示範', '先錄一段標準揮拍或握拍，發布後學生就能開始比對。', null),
+    h('div', { class: 'section-actions', style: { marginTop: '14px' } }, btn('重新整理', libraryHome, 'quiet')),
   );
+}
+
+function publishError(e) {
+  if (e.code === 'no-token') return '還沒有設定 GitHub 權杖。';
+  if (e.code === 'no-repo') return '目前的網址不是 GitHub Pages，無法判斷要存到哪個專案。';
+  if (e.status === 401) return 'GitHub 權杖無效或已過期，請重新產生並設定。';
+  if (e.status === 403 || e.status === 404) return '這個權杖沒有寫入這個專案的權限。請確認權杖有選到這個專案，且 Contents 權限是 Read and write。';
+  if (e.status === 413 || e.status === 422) return '檔案太大或格式不符。單一影片上限 100 MB，請把影片剪短再試。';
+  return `上傳失敗：${e.detail || e.message}。請確認網路連線後再試。`;
+}
+
+async function publishFlow(id, after = libraryHome) {
+  if (!requireTeacher()) return;
+  const t = await DB.get('templates', id);
+  if (!t) return toast('找不到這個示範');
+  if (!L.getToken()) {
+    setTab('library'); await after();
+    toast('示範已存在這台裝置，設定權杖後按「發布」學生才看得到');
+    return tokenDialog();
+  }
+  const txt = h('p', { class: 'progress-text' }, '準備上傳…');
+  show(head('發布示範', t.name),
+    h('p', {}, '正在把示範上傳到共享示範影片庫，請不要關閉畫面。'),
+    h('div', { class: 'progress' }, h('div', { class: 'indeterminate' })), txt);
+  try {
+    const { entry } = await L.publishTemplate(t, (m) => { txt.textContent = m; });
+    await DB.put('templates', { ...t, remote: true, rev: entry.rev });
+    toast('已發布，學生約 1 分鐘後就會看到');
+    setTab('library'); after();
+  } catch (e) {
+    console.error(e);
+    show(head('發布失敗', t.name, libraryHome),
+      h('div', { class: 'note-box warn' }, publishError(e)),
+      h('div', { class: 'btn-row' }, btn('再試一次', () => publishFlow(id, after)), btn('設定權杖', tokenDialog, 'secondary')),
+      h('p', { class: 'field-hint' }, '示範已經存在這台裝置上，之後也可以在示範影片庫按「發布」。'));
+  }
+}
+
+async function deleteFlow(t) {
+  if (!requireTeacher()) return;
+  const shared = t._state === 'remote';
+  if (!confirm(`要刪除「${t.name}」嗎？${shared ? '刪除後所有學生都看不到這個示範。' : ''}刪除後無法復原。`)) return;
+  if (shared) {
+    if (!L.getToken()) { toast('刪除共享示範需要先設定 GitHub 權杖'); return tokenDialog(); }
+    toast('正在刪除…', 8000);
+    try { await L.unpublishTemplate(t.id); } catch (e) { console.error(e); return toast(publishError(e), 6000); }
+  }
+  await DB.del('templates', t.id).catch(() => {});
+  toast('已刪除'); libraryHome();
+}
+
+function tokenDialog() {
+  const r = L.repoInfo();
+  const dlg = h('dialog', { class: 'sheet' });
+  const close = () => dlg.close();
+  const input = h('input', { type: 'password', autocomplete: 'off', placeholder: 'github_pat_…' });
+  const msg = h('p', { class: 'field-hint' });
+  const save = async () => {
+    const v = input.value.trim();
+    if (!v) return input.focus();
+    msg.style.color = ''; msg.textContent = '檢查中…';
+    const res = await L.testToken(v);
+    msg.textContent = res.msg;
+    msg.style.color = res.ok ? 'var(--good)' : '#B3261E';
+    if (res.ok) {
+      L.setToken(v);
+      toast('已設定共享示範影片庫');
+      setTimeout(() => { close(); if (location.hash.slice(1) === 'library') libraryHome(); }, 900);
+    }
+  };
+  dlg.append(h('div', { class: 'sheet-body' },
+    h('div', { class: 'sheet-head' }, h('h2', {}, '共享示範影片庫'), btn('關閉', close, 'quiet')),
+    h('p', {}, r ? `示範會存到 GitHub 專案「${r.owner}/${r.repo}」的 library 資料夾，學生打開網頁就會讀到。` : '目前的網址不是 GitHub Pages。請用 GitHub Pages 的網址開啟，或在 js/config.js 設定 LIBRARY。'),
+    h('p', { class: 'field-hint' }, L.getToken() ? '這台裝置已經設定權杖。要更換時，貼上新的權杖即可。' : '這台裝置還沒有設定權杖。'),
+    field('GitHub 權杖（Fine-grained token）', input, '只會存在這台裝置。學生的裝置不需要設定。'), msg,
+    h('div', { class: 'btn-row one' }, btn('檢查並儲存', save)),
+    L.getToken() ? h('div', { class: 'section-actions', style: { marginTop: '10px' } }, btn('移除這台裝置的權杖', () => { L.setToken(''); toast('已移除權杖'); close(); }, 'quiet')) : null));
+  document.body.append(dlg);
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.showModal();
 }
 
 // ───────── 老師身分 ─────────
@@ -994,8 +1118,9 @@ function teacherReview(meta, d, blob, series, seg, poster) {
     h('div', { class: 'btn-row' },
       btn('儲存示範', async () => {
         if (!requireTeacher()) return;
-        await DB.put('templates', { id: DB.uid(), type: 'swing', ...meta, frames: d.frames, ar: d.ar, video: blob, poster, fps: S.fps, createdAt: Date.now() });
-        toast('已儲存示範'); setTab('library'); libraryHome();
+        const id = DB.uid();
+        await DB.put('templates', { id, type: 'swing', ...meta, frames: d.frames, ar: d.ar, video: blob, poster, fps: S.fps, createdAt: Date.now(), remote: false });
+        publishFlow(id);
       }),
       btn('重新錄製', newSwingTemplate, 'secondary')),
   );
@@ -1006,7 +1131,7 @@ function newGripTemplate() {
   if (!requireTeacher()) return;
   const { formEls, collect } = templateForm('grip');
   show(
-    head('新增握拍示範', '接下來會依序拍兩個角度的握拍照片，再錄一段手腕轉動。學生比對時會看到這些照片當作參考。', libraryHome),
+    head('新增握拍示範', '接下來會依序拍兩個角度的握拍照片並標出握把頭，再錄一段手腕轉動示範影片。學生比對時會看到這些照片，手腕轉動影片只供觀看。', libraryHome),
     formEls,
     h('div', { class: 'btn-row one' }, btn('開始錄製握拍', () => {
       const meta = collect(); if (!meta) return;
@@ -1014,51 +1139,14 @@ function newGripTemplate() {
         title: '錄製握拍示範', tpl: null, hand: meta.hand, role: 'teacher', back: newGripTemplate,
         onDone: async (grip) => {
           if (!requireTeacher()) return;
-          await DB.put('templates', { id: DB.uid(), type: 'grip', ...meta, view: null, grip, poster: grip.views.back?.snap || grip.views.thumb?.snap || null, createdAt: Date.now() });
-          toast('已儲存示範'); setTab('library'); libraryHome();
+          const { rotationVideo, ...g } = grip;
+          const id = DB.uid();
+          await DB.put('templates', { id, type: 'grip', ...meta, view: null, grip: g, demoVideo: rotationVideo || null, poster: g.views.back?.snap || g.views.thumb?.snap || null, createdAt: Date.now(), remote: false });
+          publishFlow(id);
         },
       });
     }, '', 'camera')),
   );
-}
-
-const blobToDataURL = (b) => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = rej; r.readAsDataURL(b); });
-
-async function exportLibrary() {
-  if (!requireTeacher()) return;
-  const list = await templates();
-  if (!list.length) return toast('示範庫是空的');
-  toast('正在打包示範庫…');
-  const out = [];
-  for (const t of list) out.push({ ...t, video: t.video ? await blobToDataURL(t.video) : null });
-  const file = new Blob([JSON.stringify({ app: 'swing-coach', version: 1, exportedAt: Date.now(), templates: out })], { type: 'application/json' });
-  const d = new Date();
-  const name = `示範庫-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}.json`;
-  if (navigator.canShare && navigator.canShare({ files: [new File([file], name, { type: 'application/json' })] })) {
-    try { await navigator.share({ files: [new File([file], name, { type: 'application/json' })], title: '我的羽球教練示範庫' }); return; } catch { /* 使用者取消分享時改用下載 */ }
-  }
-  const a = h('a', { href: URL.createObjectURL(file), download: name });
-  document.body.append(a); a.click(); a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-}
-
-async function importLibrary() {
-  const f = await pickFile('application/json,.json');
-  if (!f) return;
-  try {
-    const json = JSON.parse(await f.text());
-    if (json.app !== 'swing-coach' || !Array.isArray(json.templates)) throw new Error('format');
-    let n = 0;
-    for (const t of json.templates) {
-      if (!t.id || !t.type) continue;
-      if (typeof t.video === 'string' && t.video.startsWith('data:')) t.video = await (await fetch(t.video)).blob();
-      await DB.put('templates', t); n++;
-    }
-    toast(`已匯入 ${n} 個示範`); libraryHome();
-  } catch (e) {
-    console.error(e);
-    toast('這不是我的羽球教練匯出的示範庫檔案');
-  }
 }
 
 // ───────── 練習紀錄 ─────────
@@ -1098,17 +1186,18 @@ function openSettings() {
     groupField('我的持拍手', segmented(HANDS, S.hand, (v) => { S.hand = v; saveSettings(); }, '我的持拍手')),
     groupField('預設鏡頭', segmented([['user', '前鏡頭'], ['environment', '後鏡頭']], S.facing, (v) => { S.facing = v; saveSettings(); }, '預設鏡頭')),
     groupField('身分', isTeacher()
-      ? h('div', {}, h('p', { style: { margin: '0 0 8px' } }, '目前是老師身分，可以新增、刪除和匯出示範。'),
+      ? h('div', {}, h('p', { style: { margin: '0 0 8px' } }, `目前是老師身分，可以新增和刪除示範影片。共享示範影片庫：${L.getToken() ? '已設定' : '尚未設定'}。`),
         h('div', { class: 'section-actions', style: { margin: 0 } },
+          btn('共享示範影片庫設定', () => { close(); tokenDialog(); }, 'secondary'),
           btn('切換為學生身分', () => { setTeacher(false); close(); toast('已切換為學生身分'); route(); }, 'secondary'),
           btn('變更老師密碼', () => { close(); changePassword(); }, 'quiet')))
       : h('div', {}, h('p', { style: { margin: '0 0 8px' } }, '目前是學生身分。'),
         btn('老師登入', () => { close(); teacherLogin(); }, 'secondary'))),
     installEvent ? h('div', { class: 'btn-row one' }, btn('安裝到這台裝置', async () => { installEvent.prompt(); await installEvent.userChoice; installEvent = null; close(); })) : null,
     h('p', { class: 'field-hint' }, `目前版本：${APP_VERSION}`),
-    h('div', { class: 'note-box' }, '影片和動作分析都在這台裝置上完成，不會上傳到任何伺服器。第一次使用需要網路下載辨識模型，之後可以離線使用。'),
+    h('div', { class: 'note-box' }, '學生的影片和動作分析都在這台裝置上完成，不會上傳。老師發布的示範影片會存放在網站的 GitHub 專案中，任何知道網址的人都能看到。第一次使用需要網路下載辨識模型。'),
     h('div', { class: 'section-actions', style: { marginTop: '16px' } }, btn('清除所有資料', async () => {
-      if (!confirm('要刪除所有示範與練習紀錄嗎？')) return;
+      if (!confirm('要刪除這台裝置上的練習紀錄和示範暫存嗎？共享示範影片庫不會受影響。')) return;
       await DB.clear('templates'); await DB.clear('history'); close(); route();
     }, 'danger'))));
   document.body.append(dlg);
@@ -1121,7 +1210,7 @@ $('#btnSettings').addEventListener('click', openSettings);
 if ('serviceWorker' in navigator && location.protocol !== 'file:') {
   const hadController = !!navigator.serviceWorker.controller;
   navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
-    .then((reg) => reg.update())
+    .then((reg) => reg && reg.update())
     .catch((e) => console.warn('Service worker 註冊失敗', e));
   let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {

@@ -1,9 +1,9 @@
 // 離線快取：程式本體預先快取；辨識模型、WASM 與字型第一次使用時快取
-const VERSION = 'swing-coach-v6';
+const VERSION = 'swing-coach-v7';
 const RUNTIME = 'swing-coach-runtime-v1';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
-  'js/app.js', 'js/vision.js', 'js/analysis.js', 'js/store.js', 'js/ui.js', 'js/config.js',
+  'js/app.js', 'js/vision.js', 'js/analysis.js', 'js/store.js', 'js/ui.js', 'js/config.js', 'js/library.js',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'images/usc-logo.png',
 ];
 const CDN_HOSTS = ['cdn.jsdelivr.net', 'storage.googleapis.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
@@ -33,6 +33,8 @@ self.addEventListener('fetch', (e) => {
     }));
     return;
   }
+  // 共享示範影片庫一律直接連網路（離線時 App 會改用 IndexedDB 裡下載過的示範）
+  if (url.origin === self.location.origin && url.pathname.includes('/library/')) return;
   if (url.origin === self.location.origin) {
     // 程式本體：先用網路取得最新版，離線時用快取
     e.respondWith(fetch(req.url, { cache: 'no-cache' }).then((res) => {
