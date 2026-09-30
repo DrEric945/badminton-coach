@@ -3,6 +3,7 @@ import * as A from './analysis.js';
 import * as DB from './store.js';
 import { TEACHER_HASH } from './config.js';
 import * as L from './library.js';
+import * as LAB from './lab3d.js';
 import { $, h, toast, sleep, fitCanvas, containMap, drawPose, drawHand, lineChart, segmented, field, groupField, pickFile, fmtScore, cssVar } from './ui.js';
 
 // ───────── 設定 ─────────
@@ -13,7 +14,7 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
-const APP_VERSION = 'v7（2026-09-26）';
+const APP_VERSION = 'v8（2026-09-30）';
 function getRole() { try { return localStorage.getItem('swing-coach-role'); } catch { return null; } }
 function isTeacher() { return getRole() === 'teacher'; }
 function setRole(role) {
@@ -48,6 +49,7 @@ const ICON = {
   pause: '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="4.5" width="4" height="15" rx="1"/><rect x="14" y="4.5" width="4" height="15" rx="1"/></svg>',
   camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="6.5" width="13" height="11" rx="2"/><path d="M15.5 10.5l6-3.5v10l-6-3.5"/></svg>',
   upload: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4"/><path d="M7 9l5-5 5 5"/><path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/></svg>',
+  cube: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" aria-hidden="true"><path d="M12 2.8l8 4.6v9.2l-8 4.6-8-4.6V7.4z"/><path d="M12 12l8-4.6M12 12L4 7.4M12 12v9.2"/></svg>',
   flip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3L20 9"/><path d="M20 4v5h-5"/><path d="M20 12a8 8 0 0 1-14 5.3L4 15"/><path d="M4 20v-5h5"/></svg>',
 };
 const svg = (name) => { const s = h('span', { html: ICON[name], style: { display: 'inline-flex' } }); return s; };
@@ -459,7 +461,7 @@ function notesList(items, good) {
 }
 
 // ───────── 揮拍結果 ─────────
-async function swingResult(tpl, stu) {
+async function swingResult(tpl, stu, opts = {}) {
   let R;
   try {
     R = A.compareSwing({ frames: tpl.frames, hand: tpl.hand }, { frames: stu.frames, hand: stu.hand }, S.fps);
@@ -472,9 +474,10 @@ async function swingResult(tpl, stu) {
     { label: '揮拍軌跡', score: R.trajScore },
     { label: '速度與節奏', score: R.speedScore },
   ];
-  DB.put('history', {
+  if (!opts.noSave) DB.put('history', {
     id: DB.uid(), type: 'swing', tplId: tpl.id, tplName: tpl.name, date: Date.now(),
     total: R.total, parts: parts.map((p) => ({ label: p.label, score: p.score })), tips: R.improve.slice(0, 3).map((n) => n.text),
+    frames: stu.frames, hand: stu.hand, ar: stu.ar, fps: S.fps,
   }).catch(console.warn);
 
   const nT = A.normalizePoseSeq(R.T.frames, tpl.ar, tpl.hand);
@@ -560,6 +563,9 @@ async function swingResult(tpl, stu) {
 
   show(
     head('揮拍比對結果', tpl.name, () => swingPrep(tpl)),
+    h('div', { class: 'lab-entry' },
+      btn('進入動作分析3D實驗室', () => lab3dScreen(tpl, stu, R, () => swingResult(tpl, stu, { noSave: true })), '', 'cube'),
+      h('p', { class: 'field-hint' }, '用立體骨架並列比較老師（藍）和你（橘）的動作。較舊的手機可以直接看下面的一般結果。')),
     scoreboard(R.total, verdict(R.total), parts),
     h('h2', {}, '需要調整的地方'), notesList(R.improve, false),
     h('h2', {}, '做得好的地方'), notesList(R.good, true),
@@ -1114,6 +1120,7 @@ function teacherReview(meta, d, blob, series, seg, poster) {
     head('確認示範', meta.name, newSwingTemplate),
     h('p', {}, `系統找到的揮拍：從 ${t(seg.start)} 秒開始，${t(seg.peak)} 秒時手腕最快（視為擊球瞬間），${t(seg.end)} 秒收拍。`),
     player.el,
+    lab3dPreview(series, seg, meta.hand),
     h('div', { class: 'note-box' }, '如果骨架播放的不是完整揮拍，請返回重新選取片段，讓影片只包含一次揮拍。'),
     h('div', { class: 'btn-row' },
       btn('儲存示範', async () => {
@@ -1149,6 +1156,148 @@ function newGripTemplate() {
   );
 }
 
+// ───────── 動作分析3D實驗室 ─────────
+const LAB_PHASE = (ts, i) => (i < ts.top ? '準備' : i < ts.peak ? '引拍到前揮' : i === ts.peak ? '擊球瞬間' : '隨揮收拍');
+
+function lab3dScreen(tpl, stu, R, back) {
+  const D = A.labDifferences(R);
+  const path = R.path;
+  const mirror = tpl.hand !== stu.hand;
+  const seqT = LAB.prepSequence(R.T.frames);
+  const seqS = LAB.prepSequence(R.S.frames, { mirror });
+  const seqSo = LAB.prepSequence(R.S.frames, { mirror, scale: (R.T.torso || 0.5) / (R.S.torso || 0.5) });
+  const moments = Object.entries(A.MOMENTS).map(([key, label]) => ({ key, label, k: D.momentK[key] }));
+  const jT = (key) => A.featureJoints(key, tpl.hand), jS = (key) => A.featureJoints(key, stu.hand);
+  const arcsFor = (mkey) => (D.arcs[mkey] || []).map((a) => ({ part: a.part, values: [a.teacher, a.student], joints: [jT(a.featureKey), jS(a.featureKey)] }));
+  const holder = h('div', { class: 'lab' });
+
+  // 原始影片（展開時同步）
+  const vids = [];
+  const mkVid = (blob, frames, tag, which) => {
+    if (!blob) return h('div', { class: 'stage lab-novideo' }, h('p', {}, tag === '你' ? '這筆紀錄沒有保存影片' : '這個示範沒有影片'));
+    const url = URL.createObjectURL(blob);
+    const v = h('video', { class: 'stage-media', src: url, muted: true, playsInline: true, preload: 'auto' });
+    onLeaveLater(() => URL.revokeObjectURL(url));
+    vids.push({ v, frames, which, ready: V.ensureReady(v).catch(() => {}) });
+    return h('div', { class: 'stage' }, v, h('div', { class: 'stage-tag lab-tag ' + (which ? 'orange' : 'blue') }, tag));
+  };
+  const videoBox = h('details', { class: 'lab-videos' }, h('summary', {}, '原始影片（跟著 3D 畫面同步）'),
+    h('div', { class: 'pair' }, mkVid(tpl.video, R.T.frames, '示範', 0), mkVid(stu.blob, R.S.frames, '你', 1)));
+  let syncing = false, pending = null, lastSync = 0;
+  const syncVideos = async (k) => {
+    if (!videoBox.open || !vids.length) return;
+    pending = k;
+    if (syncing) return;
+    syncing = true;
+    while (pending != null) {
+      const q = pending; pending = null;
+      const [i, j] = path[q];
+      await Promise.all(vids.map(async (o) => { await o.ready; const f = o.frames[o.which ? j : i]; if (f) await V.seek(o.v, f.t); }));
+    }
+    syncing = false;
+  };
+
+  const diffItems = D.items.length
+    ? h('ul', { class: 'lab-diffs' }, D.items.map((it) => h('li', {}, h('button', { type: 'button', onclick: () => {
+      viewer.focus({ k: it.k, moment: it.moment, joints: [jT(it.featureKey), jS(it.featureKey)] });
+      holder.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } },
+      h('span', { class: 'lab-diff-head' },
+        h('span', { class: 'chip ' + (it.severity === '明顯' ? 'sev-high' : 'sev-low') }, it.severity),
+        h('span', { class: 'chip' }, it.momentLabel),
+        h('strong', {}, it.part)),
+      h('span', { class: 'lab-diff-vals' },
+        it.teacherText ? h('span', { class: 'lab-val blue' }, `藍 ${it.teacherText}`) : null,
+        it.studentText ? h('span', { class: 'lab-val orange' }, `橘 ${it.studentText}`) : null,
+        h('span', { class: 'lab-diff' }, it.diffText)),
+      h('span', { class: 'lab-diff-advice' }, it.advice),
+      it.alsoAt && it.alsoAt.length ? h('span', { class: 'detail' }, `${it.alsoAt.join('、')}也有類似差異`) : null,
+      h('span', { class: 'lab-diff-go' }, '點一下看這個瞬間')))))
+    : h('p', { class: 'field-hint' }, '三個關鍵時刻都和示範很接近，沒有明顯差異。');
+  const matchItems = D.matches.length
+    ? h('ul', { class: 'notes good' }, D.matches.map((m) => h('li', {}, m.part, h('span', { class: 'detail' }, m.text))))
+    : h('p', { class: 'field-hint' }, '這次各部位都和示範有些差距，先從上面差異最明顯的一項開始調整。');
+
+  show(
+    head('動作分析3D實驗室', tpl.name, back),
+    h('div', { class: 'legend lab-legend' },
+      h('span', {}, h('i', { style: { background: '#4EA8FF' } }), '藍色：老師示範'),
+      h('span', {}, h('i', { style: { background: '#FF8A3D' } }), '橘色：你這次的動作')),
+    holder,
+    h('p', { class: 'lab-note' }, '3D 深度為推估值，數據僅供參考。拖曳可旋轉視角，雙指或滾輪可縮放。'),
+    videoBox,
+    h('h2', {}, '藍色與橘色的不同之處'),
+    h('p', { class: 'field-hint' }, '依差異大小排序。點任一項，3D 畫面會跳到那個瞬間，並把相關部位標成紅色閃爍。'),
+    diffItems,
+    h('h2', {}, '和示範一致的地方'), matchItems,
+    h('div', { class: 'btn-row one' }, btn('回到一般結果頁', back, 'secondary')),
+  );
+  let viewer;
+  try {
+    viewer = LAB.createLab(holder, {
+      skeletons: [
+        { seq: seqT, seqOverlay: seqT, color: 'blue', tag: '藍：示範', index: 'i' },
+        { seq: seqS, seqOverlay: seqSo, color: 'orange', tag: '橘：你', index: 'j' },
+      ],
+      steps: path, moments, arcsFor,
+      stepSeconds: R.T.dt || 1 / 30,
+      facing: LAB.facingFrom(seqT, R.ts.start, tpl.hand),
+      phaseLabel: (k) => LAB_PHASE(R.ts, path[k][0]),
+      timeLabel: (k) => `示範 ${R.T.t[path[k][0]].toFixed(2)} 秒｜你 ${R.S.t[path[k][1]].toFixed(2)} 秒`,
+      onPos: (k, playing) => {
+        const now = performance.now();
+        if (!playing || now - lastSync > 200) { lastSync = now; syncVideos(k); }
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    holder.append(h('div', { class: 'note-box warn' }, '這台裝置無法顯示 3D 畫面，請回到一般結果頁查看。'));
+    return;
+  }
+  videoBox.addEventListener('toggle', () => { if (videoBox.open) syncVideos(+(holder.querySelector('input[type=range]')?.value || 0)); });
+  onLeave(() => viewer.destroy());
+}
+
+// 老師確認示範時的藍色 3D 預覽（展開才建立，節省效能）
+function lab3dPreview(series, seg, hand) {
+  const box = h('details', { class: 'lab-preview' }, h('summary', {}, '預覽藍色 3D 骨架'));
+  let viewer = null;
+  box.addEventListener('toggle', () => {
+    if (!box.open || viewer) return;
+    const seq = LAB.prepSequence(series.frames);
+    const steps = []; for (let k = seg.start; k <= seg.end; k++) steps.push([k, null]);
+    const moments = [['top', '引拍頂點'], ['peak', '擊球瞬間'], ['end', '收拍']].map(([key, label]) => ({ key, label, k: steps.findIndex((s) => s[0] === seg[key]) }));
+    const holder = h('div', { class: 'lab' });
+    box.append(holder, h('p', { class: 'lab-note' }, '確認藍色骨架的動作正確後再儲存示範。3D 深度為推估值。'));
+    try {
+      viewer = LAB.createLab(holder, {
+        skeletons: [{ seq, color: 'blue', tag: '藍：示範', index: 'i' }],
+        steps, moments, stepSeconds: series.dt || 1 / 30,
+        facing: LAB.facingFrom(seq, seg.start, hand),
+        phaseLabel: (k) => LAB_PHASE(seg, steps[k][0]),
+        timeLabel: (k) => `${series.t[steps[k][0]].toFixed(2)} 秒`,
+      });
+      onLeave(() => viewer.destroy());
+    } catch (e) {
+      console.error(e);
+      holder.append(h('div', { class: 'note-box warn' }, '這台裝置無法顯示 3D 畫面。'));
+    }
+  });
+  return box;
+}
+
+async function reopenLab(r) {
+  const list = await templates('swing');
+  const entry = list.find((t) => t.id === r.tplId);
+  if (!entry) return toast('這個示範已經被刪除，無法重新打開 3D 實驗室');
+  openEntry(entry, (tpl) => {
+    let R;
+    try { R = A.compareSwing({ frames: tpl.frames, hand: tpl.hand }, { frames: r.frames, hand: r.hand }, r.fps || S.fps); }
+    catch (e) { return errorScreen('無法比對', e.message || '比對時發生錯誤。', historyHome); }
+    lab3dScreen(tpl, { frames: r.frames, hand: r.hand, ar: r.ar, blob: null }, R, () => { setTab('history'); historyHome(); });
+  }, historyHome);
+}
+
 // ───────── 練習紀錄 ─────────
 async function historyHome() {
   const rows = (await DB.all('history')).sort((a, b) => b.date - a.date);
@@ -1160,7 +1309,8 @@ async function historyHome() {
         h('div', {},
           h('div', { class: 'tpl-name' }, r.tplName),
           h('div', { class: 'history-meta' }, `${r.type === 'swing' ? '揮拍' : '握拍'}，${fmt.format(new Date(r.date))}`),
-          r.tips && r.tips[0] ? h('div', { class: 'history-tip' }, r.tips[0]) : null),
+          r.tips && r.tips[0] ? h('div', { class: 'history-tip' }, r.tips[0]) : null,
+          r.type === 'swing' && r.frames ? h('div', { style: { marginTop: '8px' } }, btn('打開 3D 實驗室', () => reopenLab(r), 'secondary small', 'cube')) : null),
         h('div', { class: 'history-score' }, fmtScore(r.total)))),
       h('div', { class: 'section-actions', style: { marginTop: '20px' } }, btn('清除所有紀錄', async () => {
         if (!confirm('要清除所有練習紀錄嗎？')) return;

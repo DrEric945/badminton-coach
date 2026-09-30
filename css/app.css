@@ -298,3 +298,63 @@ dialog.sheet::backdrop { background: rgba(20, 56, 86, 0.5); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
 }
+
+/* ───────── 動作分析3D實驗室 ───────── */
+.lab-entry { margin: 0 0 18px; display: grid; gap: 6px; }
+.lab-entry .btn { width: 100%; background: #0E1C2B; border-color: #0E1C2B; }
+.lab-entry .field-hint { margin: 0; }
+.btn.small { min-height: 38px; padding: 0 12px; font-size: 14px; }
+.lab { display: grid; gap: 10px; }
+.lab-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }
+.lab-views { display: flex; gap: 6px; }
+.lab-view { min-height: 40px; padding: 0 12px; font-weight: 500; }
+.lab-stage { position: relative; border-radius: var(--radius-m); overflow: hidden; background: #07111B; height: min(72vh, 150vw); }
+.lab-canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.lab-canvas:active { cursor: grabbing; }
+@media (orientation: landscape) { .lab-stage { height: min(78vh, 56vw); } }
+.lab-player .player-bar { margin-top: 0; }
+.lab-track { position: relative; padding-top: 26px; }
+.lab-marks { position: absolute; left: 0; right: 0; top: 0; height: 24px; }
+.lab-mark {
+  position: absolute; top: 0; transform: translateX(-50%); border: 1px solid var(--court); background: var(--surface); color: var(--court);
+  font-size: 12px; line-height: 1; padding: 4px 7px; border-radius: 999px; cursor: pointer; white-space: nowrap;
+}
+.lab-mark::after { content: ""; position: absolute; left: 50%; top: 100%; width: 1px; height: 6px; background: var(--court); }
+.lab-time { margin-left: auto; font-family: var(--font-num); font-size: 16px; color: var(--muted); }
+.lab-caption:empty { display: none; }
+.lab-caption { background: #0E1C2B; color: #E6EEF5; border-radius: var(--radius-m); padding: 12px 14px; }
+.lab-caption ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.lab-caption li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
+.lab-part { min-width: 8em; }
+.lab-val { font-family: var(--font-num); font-size: 18px; font-weight: 600; }
+.lab-val.blue { color: #2F7FD1; }
+.lab-val.orange { color: #D9651A; }
+.lab-caption .lab-val.blue { color: #4EA8FF; }
+.lab-caption .lab-val.orange { color: #FF8A3D; }
+.lab-diff { font-family: var(--font-num); font-size: 16px; color: var(--muted); }
+.lab-caption .lab-diff { color: #AFC2D3; }
+.lab-note { margin: 4px 0 0; font-size: 13.5px; color: var(--muted); }
+.lab-legend i { height: 6px; }
+.lab-videos { margin-top: 14px; border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 10px 12px; background: var(--surface); }
+.lab-videos summary, .lab-preview summary { cursor: pointer; font-weight: 700; min-height: 32px; display: flex; align-items: center; }
+.lab-videos .pair { margin-top: 10px; }
+.lab-novideo { display: grid; place-items: center; text-align: center; padding: 12px; }
+.lab-novideo p { position: relative; z-index: 1; margin: 0; font-size: 14px; }
+.lab-tag.blue { background: #4EA8FF; color: #06121E; }
+.lab-tag.orange { background: #FF8A3D; color: #1E0E02; }
+.lab-preview { margin: 16px 0; border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 10px 12px; background: var(--surface); }
+.lab-preview .lab { margin-top: 10px; }
+.lab-diffs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.lab-diffs button {
+  width: 100%; text-align: left; display: grid; gap: 6px; padding: 12px 14px; cursor: pointer;
+  background: var(--surface); border: 1px solid var(--rule); border-left: 4px solid #FF8A3D; border-radius: var(--radius-s);
+}
+.lab-diffs button:hover { border-color: #FF8A3D; }
+.lab-diff-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lab-diff-head strong { font-size: 16px; }
+.lab-diff-vals { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: baseline; }
+.lab-diff-advice { font-size: 15px; }
+.lab-diffs .detail { color: var(--muted); font-size: 13.5px; }
+.lab-diff-go { font-size: 13px; color: var(--court); }
+.chip.sev-high { background: #FFD9D6; color: #8C1D18; }
+.chip.sev-low { background: #FDEBC8; color: #6B4A00; }

@@ -78,7 +78,7 @@ export const SWING_FEATURES = [
 
 export const MOMENTS = { top: '引拍頂點', peak: '擊球瞬間', end: '收拍' };
 
-function sides(hand) {
+export function sides(hand) {
   const R = { S: 12, E: 14, W: 16, I: 20, H: 24, K: 26, A: 28 };
   const L = { S: 11, E: 13, W: 15, I: 19, H: 23, K: 25, A: 27 };
   return hand === 'L' ? { D: L, N: R } : { D: R, N: L };
@@ -324,6 +324,118 @@ export function compareSwing(teacher, student, fps = 30) {
     features, improve: improve.slice(0, 6), good: good.slice(0, 4),
     T, S, ts, ss, path, moments, turnOffset,
   };
+}
+
+// ───────────────────────── 3D 實驗室 ─────────────────────────
+
+// 每個特徵對應的關節（v 為角度頂點，a、c 為兩端）與要標示的骨頭；33、34 是 3D 檢視器的肩膀中心與髖部中心
+const FEATURE_JOINTS = {
+  dElbow: { side: 'D', v: 'E', a: 'S', c: 'W' },
+  dShoulder: { side: 'D', v: 'S', a: 'H', c: 'E' },
+  dWrist: { side: 'D', v: 'W', a: 'E', c: 'I' },
+  nElbow: { side: 'N', v: 'E', a: 'S', c: 'W' },
+  nShoulder: { side: 'N', v: 'S', a: 'H', c: 'E' },
+  dKnee: { side: 'D', v: 'K', a: 'H', c: 'A' },
+  nKnee: { side: 'N', v: 'K', a: 'H', c: 'A' },
+  twist: { bones: [[11, 12], [23, 24]], joints: [11, 12, 23, 24] },
+  turn: { bones: [[11, 12]], joints: [11, 12] },
+  lean: { bones: [[33, 34]], joints: [11, 12, 23, 24] },
+  wristPos: { side: 'D', jointKeys: ['W', 'I'], boneKeys: [['E', 'W'], ['W', 'I']] },
+  speed: { side: 'D', jointKeys: ['E', 'W'], boneKeys: [['S', 'E'], ['E', 'W'], ['W', 'I']] },
+};
+
+export function featureJoints(key, hand = 'R') {
+  const def = FEATURE_JOINTS[key];
+  if (!def) return { joints: [], bones: [] };
+  const sd = def.side ? sides(hand)[def.side] : null;
+  if (def.v) {
+    const v = sd[def.v], a = sd[def.a], c = sd[def.c];
+    return { v, a, c, joints: [v], bones: [[a, v], [v, c]] };
+  }
+  if (def.jointKeys) return { joints: def.jointKeys.map((k) => sd[k]), bones: def.boneKeys.map(([x, y]) => [sd[x], sd[y]]) };
+  return { joints: def.joints.slice(), bones: def.bones.map((b) => b.slice()) };
+}
+
+// 比較藍色（示範）與橘色（學生）在三個關鍵時刻的差異，給 3D 實驗室使用
+export function labDifferences(R) {
+  const { T, S, path, moments, turnOffset } = R;
+  const momentK = {};
+  for (const key of Object.keys(MOMENTS)) {
+    const ti = moments[key].ti;
+    let k = path.findIndex((p) => p[0] === ti);
+    if (k < 0) k = key === 'end' ? path.length - 1 : 0;
+    momentK[key] = k;
+  }
+  const value = (F, who, idx) => {
+    let v = (who === 'T' ? T : S).feats[F.key][idx] + (who === 'S' && F.key === 'turn' ? turnOffset : 0);
+    return F.abs ? Math.abs(v) : v;
+  };
+  const items = [], arcs = {}, worst = {};
+  for (const [mkey, k] of Object.entries(momentK)) {
+    const [i, j] = path[k];
+    const rows = [];
+    for (const F of SWING_FEATURES) {
+      const t = value(F, 'T', i), sv = value(F, 'S', j);
+      const d = F.wrap ? wrap180(sv - t) : sv - t;
+      rows.push({ F, t, s: sv, d });
+      worst[F.key] = Math.max(worst[F.key] || 0, Math.abs(d));
+      const strong = Math.max(2 * F.good, 15), mild = F.good + 4;
+      if (Math.abs(d) >= mild) {
+        const show = F.key !== 'turn';
+        items.push({
+          moment: mkey, momentLabel: MOMENTS[mkey], k, featureKey: F.key, part: F.label,
+          teacherText: show ? `${Math.round(t)}°` : null, studentText: show ? `${Math.round(sv)}°` : null,
+          diffText: show ? `${d > 0 ? '+' : ''}${Math.round(d)}°` : `相差 ${Math.round(Math.abs(d))}°`,
+          severity: Math.abs(d) >= strong ? '明顯' : '輕微', advice: d > 0 ? F.more : F.less, sev: Math.abs(d) * F.w,
+        });
+      }
+    }
+    arcs[mkey] = rows.filter((r) => FEATURE_JOINTS[r.F.key] && FEATURE_JOINTS[r.F.key].v)
+      .sort((a, b) => Math.abs(b.d) * b.F.w - Math.abs(a.d) * a.F.w).slice(0, 3)
+      .map((r) => ({ featureKey: r.F.key, part: r.F.label, teacher: r.t, student: r.s, diff: r.d }));
+  }
+  // 擊球點位置與揮拍速度
+  const kp = momentK.peak, [ip, jp] = path[kp];
+  const pT = T.pos[ip], pS = S.pos[jp];
+  const cm = (x) => Math.round(Math.abs(x) * (T.torso || 0.5) * 100);
+  const dy = pS[1] - pT[1];
+  if (Math.abs(dy) > 0.1) items.push({
+    moment: 'peak', momentLabel: MOMENTS.peak, k: kp, featureKey: 'wristPos', part: '擊球點高度',
+    teacherText: null, studentText: null, diffText: `${dy > 0 ? '低' : '高'}約 ${cm(dy)} 公分`,
+    severity: Math.abs(dy) > 0.2 ? '明顯' : '輕微', advice: dy > 0 ? '擊球點比示範低，擊球時手再往上延伸' : '擊球點比示範高', sev: Math.abs(dy) * 80,
+  });
+  const reachT = Math.hypot(pT[0], pT[2]), reachS = Math.hypot(pS[0], pS[2]);
+  if (reachT - reachS > 0.12) items.push({
+    moment: 'peak', momentLabel: MOMENTS.peak, k: kp, featureKey: 'wristPos', part: '擊球點與身體的距離',
+    teacherText: null, studentText: null, diffText: `近約 ${cm(reachT - reachS)} 公分`,
+    severity: reachT - reachS > 0.22 ? '明顯' : '輕微', advice: '擊球點太靠近身體，手臂再往外伸展', sev: (reachT - reachS) * 70,
+  });
+  const r = R.parts.speedRatio;
+  if (r < 0.85 || r > 1.3) items.push({
+    moment: 'peak', momentLabel: MOMENTS.peak, k: kp, featureKey: 'speed', part: '揮拍速度',
+    teacherText: '100%', studentText: `${Math.round(r * 100)}%`, diffText: `${r < 1 ? '慢' : '快'} ${Math.round(Math.abs(1 - r) * 100)}%`,
+    severity: r < 0.7 || r > 1.5 ? '明顯' : '輕微',
+    advice: r < 1 ? '前揮時再加速，速度以身體比例換算，不受身高影響' : '速度比示範快很多，先確認動作完整、控制穩定', sev: Math.abs(1 - r) * 60,
+  });
+  // 同一個部位、同一個方向在多個時刻都有差異時，保留差最多的那一次，其他時刻列在 alsoAt
+  const merged = new Map();
+  for (const it of items) {
+    const key = it.featureKey + (it.diffText.startsWith('-') ? '-' : '+') + (it.featureKey === 'wristPos' ? it.part : '');
+    const cur = merged.get(key);
+    if (!cur) merged.set(key, { ...it, alsoAt: [] });
+    else if (it.sev > cur.sev) merged.set(key, { ...it, alsoAt: [...cur.alsoAt, cur.momentLabel] });
+    else cur.alsoAt.push(it.momentLabel);
+  }
+  items.length = 0;
+  items.push(...merged.values());
+  items.sort((a, b) => b.sev - a.sev);
+  const matches = [];
+  for (const F of SWING_FEATURES) {
+    if (F.w < 0.6) continue;
+    if ((worst[F.key] ?? 99) < F.good + 4) matches.push({ part: F.label, text: `三個關鍵時刻都和示範相差不到 ${Math.max(1, Math.ceil(worst[F.key]))}°` });
+  }
+  if (r >= 0.85 && r <= 1.3) matches.push({ part: '揮拍速度', text: `約為示範的 ${Math.round(r * 100)}%，節奏相當` });
+  return { items, matches, arcs, momentK };
 }
 
 // ───────────────────────── 握拍 ─────────────────────────
