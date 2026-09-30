@@ -14,7 +14,7 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
-const APP_VERSION = 'v8（2026-09-30）';
+const APP_VERSION = 'v9（2026-09-30）';
 function getRole() { try { return localStorage.getItem('swing-coach-role'); } catch { return null; } }
 function isTeacher() { return getRole() === 'teacher'; }
 function setRole(role) {
@@ -220,7 +220,7 @@ async function captureSwing({ title, back, onBlob }) {
     stage,
     h('div', { class: 'controls center' }, recBtn),
     h('div', { class: 'controls center' },
-      segmented([[4, '4 秒'], [6, '6 秒'], [10, '10 秒']], S.recSec, (v) => { S.recSec = v; saveSettings(); }, '錄影長度'),
+      segmented([[4, '4 秒'], [6, '6 秒'], [10, '10 秒'], [20, '20 秒（多球）']], S.recSec, (v) => { S.recSec = v; saveSettings(); }, '錄影長度'),
       flipBtn),
   );
   let stream = null, pose = null, running = true, recorder = null, recording = false, wantResult = false, stopTimer = null, tick = null, busy = false;
@@ -321,7 +321,7 @@ async function trimAnalyze(blob, { title, back, onFrames }) {
   const canvas = h('canvas', { class: 'stage-overlay' });
   const stage = h('div', { class: 'stage' }, video, canvas);
   const body = h('div', {}, h('p', { class: 'progress-text' }, '讀取影片中…'));
-  show(head(title, '拖動滑桿，只保留一次揮拍的前後片段（最長 15 秒）。', back), stage, body);
+  show(head(title, '拖動滑桿，保留要分析的片段（最長 30 秒）。一段影片裡有多次揮拍時，系統會逐球分析。', back), stage, body);
   let cancelled = false;
   onLeave(() => { cancelled = true; URL.revokeObjectURL(url); });
   let dur = 0;
@@ -331,14 +331,14 @@ async function trimAnalyze(blob, { title, back, onFrames }) {
     body.replaceChildren(h('div', { class: 'note-box warn' }, '無法讀取這段影片的長度。請換一段影片，或用手機內建相機錄影後再上傳。'));
     return;
   }
-  let start = 0, end = Math.min(dur, 15);
+  let start = 0, end = Math.min(dur, 30);
   const outS = h('output', {}, '0.0'), outE = h('output', {}, end.toFixed(1));
   const rS = h('input', { type: 'range', min: 0, max: dur, step: 0.05, value: 0, 'aria-label': '開始時間' });
   const rE = h('input', { type: 'range', min: 0, max: dur, step: 0.05, value: end, 'aria-label': '結束時間' });
   const onRange = (which) => {
     start = +rS.value; end = +rE.value;
-    if (which === 's' && end - start > 15) { end = start + 15; rE.value = end; }
-    if (which === 'e' && end - start > 15) { start = end - 15; rS.value = start; }
+    if (which === 's' && end - start > 30) { end = start + 30; rE.value = end; }
+    if (which === 'e' && end - start > 30) { start = end - 30; rS.value = start; }
     if (end - start < 0.5) { if (which === 's') { start = Math.max(0, end - 0.5); rS.value = start; } else { end = Math.min(dur, start + 0.5); rE.value = end; } }
     outS.textContent = start.toFixed(1); outE.textContent = end.toFixed(1);
     video.currentTime = which === 's' ? start : end;
@@ -462,13 +462,18 @@ function notesList(items, good) {
 
 // ───────── 揮拍結果 ─────────
 async function swingResult(tpl, stu, opts = {}) {
-  let R;
+  let MS;
   try {
-    R = A.compareSwing({ frames: tpl.frames, hand: tpl.hand }, { frames: stu.frames, hand: stu.hand }, S.fps);
+    MS = stu._shots || (stu._shots = A.compareSwingShots({ frames: tpl.frames, hand: tpl.hand }, { frames: stu.frames, hand: stu.hand }, stu.fps || S.fps));
   } catch (e) {
     console.error(e);
     return errorScreen('無法比對', e.message || '比對時發生錯誤，請重新錄一次。', () => swingPrep(tpl));
   }
+  const multi = MS.shots.length > 1;
+  const shotIdx = opts.shot != null ? opts.shot : (multi ? MS.summary.worst : 0);
+  const R = MS.shots[shotIdx].R;
+  const LD = A.labDifferences(R);
+  const plan = A.practicePlan(multi ? MS.summary.issues.map((i) => ({ ...i, momentLabel: `${i.count}/${MS.summary.count} 球`, diffText: '' })) : LD.items);
   const parts = [
     { label: '姿勢角度', score: R.angleScore },
     { label: '揮拍軌跡', score: R.trajScore },
@@ -476,8 +481,10 @@ async function swingResult(tpl, stu, opts = {}) {
   ];
   if (!opts.noSave) DB.put('history', {
     id: DB.uid(), type: 'swing', tplId: tpl.id, tplName: tpl.name, date: Date.now(),
-    total: R.total, parts: parts.map((p) => ({ label: p.label, score: p.score })), tips: R.improve.slice(0, 3).map((n) => n.text),
-    frames: stu.frames, hand: stu.hand, ar: stu.ar, fps: S.fps,
+    total: multi ? MS.summary.avg : R.total, shots: MS.shots.length,
+    parts: parts.map((p) => ({ label: p.label, score: p.score })),
+    tips: multi ? MS.summary.issues.slice(0, 3).map((i) => `${i.part}（${i.count}/${MS.summary.count} 球）`) : R.improve.slice(0, 3).map((n) => n.text),
+    frames: stu.frames, hand: stu.hand, ar: stu.ar, fps: stu.fps || S.fps,
   }).catch(console.warn);
 
   const nT = A.normalizePoseSeq(R.T.frames, tpl.ar, tpl.hand);
@@ -563,11 +570,13 @@ async function swingResult(tpl, stu, opts = {}) {
 
   show(
     head('揮拍比對結果', tpl.name, () => swingPrep(tpl)),
+    multi ? shotPicker(MS, shotIdx, (i) => swingResult(tpl, stu, { noSave: true, shot: i })) : null,
     h('div', { class: 'lab-entry' },
-      btn('進入動作分析3D實驗室', () => lab3dScreen(tpl, stu, R, () => swingResult(tpl, stu, { noSave: true })), '', 'cube'),
-      h('p', { class: 'field-hint' }, '用立體骨架並列比較老師（藍）和你（橘）的動作。較舊的手機可以直接看下面的一般結果。')),
-    scoreboard(R.total, verdict(R.total), parts),
+      btn('進入動作分析3D實驗室', () => lab3dScreen(tpl, stu, MS, shotIdx, () => swingResult(tpl, stu, { noSave: true, shot: shotIdx })), '', 'cube'),
+      h('p', { class: 'field-hint' }, '用立體骨架並列比較教師（藍）和學生（橘）的動作。較舊的手機可以直接看下面的一般結果。')),
+    scoreboard(R.total, multi ? `第 ${shotIdx + 1} 球：${verdict(R.total)}` : verdict(R.total), parts),
     h('h2', {}, '需要調整的地方'), notesList(R.improve, false),
+    plan.length ? [h('h2', {}, '練習方法'), practiceList(plan)] : null,
     h('h2', {}, '做得好的地方'), notesList(R.good, true),
     h('h2', {}, '骨架疊圖'),
     h('p', { class: 'field-hint' }, '兩個人的骨架已經對齊身體位置和動作時間，看得出哪一段不一樣。'),
@@ -1156,11 +1165,52 @@ function newGripTemplate() {
   );
 }
 
+// ───────── 多球與練習方法的共用元件 ─────────
+function shotPicker(MS, current, onPick) {
+  const fmt = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  const spread = MS.shots[MS.summary.best].R.total - MS.shots[MS.summary.worst].R.total >= 3;
+  return h('section', { class: 'shot-picker', 'aria-label': '選擇要看的球' },
+    h('p', { class: 'shot-sum' }, `這段影片共偵測到 ${MS.summary.count} 次揮拍，平均 ${fmtScore(MS.summary.avg)} 分。點選要看的那一球：`),
+    h('div', { class: 'shot-row' }, MS.shots.map((sh, i) => h('button', {
+      type: 'button', class: 'shot-chip', 'aria-pressed': String(i === current), onclick: () => { if (i !== current) onPick(i); },
+    },
+    h('span', { class: 'shot-no' }, `第 ${i + 1} 球`),
+    h('span', { class: 'shot-time' }, fmt(sh.t)),
+    h('span', { class: 'shot-score' }, `${fmtScore(sh.R.total)} 分`),
+    spread && i === MS.summary.best ? h('span', { class: 'shot-tag best' }, '最好') : spread && i === MS.summary.worst ? h('span', { class: 'shot-tag worst' }, '最需調整') : null))));
+}
+function issueCountText(MS, it) {
+  const key = MS.summary.issues.find((i) => i.part === it.part);
+  return key ? h('span', { class: 'detail' }, `這個問題出現在 ${key.count}/${MS.summary.count} 球`) : null;
+}
+function drillCard(d) {
+  return h('div', { class: 'drill' },
+    h('div', { class: 'drill-head' }, h('span', { class: 'drill-label' }, '練習方法'), h('strong', {}, d.name), h('span', { class: 'drill-dose' }, d.dose)),
+    h('p', {}, d.how),
+    h('p', { class: 'drill-cue' }, `檢查重點：${d.cue}`));
+}
+function practiceList(plan) {
+  return h('div', {},
+    h('ol', { class: 'practice' }, plan.map((d) => h('li', {},
+      h('div', { class: 'drill-head' }, h('strong', {}, d.name), h('span', { class: 'drill-dose' }, d.dose)),
+      h('p', {}, d.how),
+      h('p', { class: 'drill-cue' }, `檢查重點：${d.cue}`),
+      d.reason ? h('p', { class: 'detail' }, `對應問題：${d.reason}`) : null))),
+    h('p', { class: 'field-hint' }, '建議每週練習 3 次，每次約 15 到 20 分鐘，先做熱身再練習。一週後用同樣角度再錄一次，比對看看分數和差異有沒有進步。'));
+}
+function fmtMetric(v, unit) {
+  if (!isFinite(v)) return '—';
+  return unit === '公分' ? `${Math.round(v)} 公分` : `${Math.round(v)}°`;
+}
+
 // ───────── 動作分析3D實驗室 ─────────
 const LAB_PHASE = (ts, i) => (i < ts.top ? '準備' : i < ts.peak ? '引拍到前揮' : i === ts.peak ? '擊球瞬間' : '隨揮收拍');
 
-function lab3dScreen(tpl, stu, R, back) {
+function lab3dScreen(tpl, stu, MS, shotIdx, back) {
+  const R = MS.shots[shotIdx].R;
+  const multi = MS.shots.length > 1;
   const D = A.labDifferences(R);
+  const plan = A.practicePlan(D.items);
   const path = R.path;
   const mirror = tpl.hand !== stu.hand;
   const seqT = LAB.prepSequence(R.T.frames);
@@ -1179,9 +1229,9 @@ function lab3dScreen(tpl, stu, R, back) {
     const v = h('video', { class: 'stage-media', src: url, muted: true, playsInline: true, preload: 'auto' });
     onLeaveLater(() => URL.revokeObjectURL(url));
     vids.push({ v, frames, which, ready: V.ensureReady(v).catch(() => {}) });
-    return h('div', { class: 'stage' }, v, h('div', { class: 'stage-tag lab-tag ' + (which ? 'orange' : 'blue') }, tag));
+    return h('div', { class: 'stage' }, v, h('div', { class: 'stage-tag lab-tag ' + (which ? 'orange' : 'blue') }, which ? '學生' : '教師'));
   };
-  const videoBox = h('details', { class: 'lab-videos' }, h('summary', {}, '原始影片（跟著 3D 畫面同步）'),
+  const videoBox = h('details', { class: 'lab-videos' }, h('summary', {}, '學生與教師的原始影片（跟著 3D 畫面同步）'),
     h('div', { class: 'pair' }, mkVid(tpl.video, R.T.frames, '示範', 0), mkVid(stu.blob, R.S.frames, '你', 1)));
   let syncing = false, pending = null, lastSync = 0;
   const syncVideos = async (k) => {
@@ -1207,44 +1257,76 @@ function lab3dScreen(tpl, stu, R, back) {
         h('span', { class: 'chip' }, it.momentLabel),
         h('strong', {}, it.part)),
       h('span', { class: 'lab-diff-vals' },
-        it.teacherText ? h('span', { class: 'lab-val blue' }, `藍 ${it.teacherText}`) : null,
-        it.studentText ? h('span', { class: 'lab-val orange' }, `橘 ${it.studentText}`) : null,
+        it.teacherText ? h('span', { class: 'lab-val blue' }, `教師 ${it.teacherText}`) : null,
+        it.studentText ? h('span', { class: 'lab-val orange' }, `學生 ${it.studentText}`) : null,
         h('span', { class: 'lab-diff' }, it.diffText)),
       h('span', { class: 'lab-diff-advice' }, it.advice),
       it.alsoAt && it.alsoAt.length ? h('span', { class: 'detail' }, `${it.alsoAt.join('、')}也有類似差異`) : null,
-      h('span', { class: 'lab-diff-go' }, '點一下看這個瞬間')))))
-    : h('p', { class: 'field-hint' }, '三個關鍵時刻都和示範很接近，沒有明顯差異。');
+      multi ? issueCountText(MS, it) : null,
+      h('span', { class: 'lab-diff-go' }, '點一下看這個瞬間')),
+      it.drill ? drillCard(it.drill) : null)))
+    : h('p', { class: 'field-hint' }, '三個關鍵時刻都和教師示範很接近，沒有明顯差異。');
   const matchItems = D.matches.length
     ? h('ul', { class: 'notes good' }, D.matches.map((m) => h('li', {}, m.part, h('span', { class: 'detail' }, m.text))))
     : h('p', { class: 'field-hint' }, '這次各部位都和示範有些差距，先從上面差異最明顯的一項開始調整。');
 
+  const metricsBox = h('div', { class: 'lab-metrics' });
+  const renderMetrics = (k) => {
+    const rows = A.metricsAt(R, k);
+    metricsBox.replaceChildren(h('table', {},
+      h('thead', {}, h('tr', {}, h('th', {}, '目前畫面'), h('th', { class: 'blue' }, '教師'), h('th', { class: 'orange' }, '學生'), h('th', {}, '差'))),
+      h('tbody', {}, rows.map((m) => h('tr', { class: m.warn ? 'warn' : '' },
+        h('td', {}, m.label),
+        h('td', { class: 'num' }, fmtMetric(m.teacher, m.unit)),
+        h('td', { class: 'num' }, fmtMetric(m.student, m.unit)),
+        h('td', { class: 'num' }, (m.diff > 0 ? '+' : '') + fmtMetric(m.diff, m.unit)))))));
+  };
+  const strong = D.items.filter((x) => x.severity === '明顯').length;
+  const headline = multi
+    ? h('section', { class: 'lab-hero' },
+      h('div', { class: 'lab-hero-num' }, h('b', {}, String(MS.summary.count)), h('span', {}, '球拆解')),
+      h('p', {}, MS.summary.issues.length
+        ? `最常見的問題是「${MS.summary.issues[0].part}」，出現在 ${MS.summary.issues[0].count}/${MS.summary.count} 球。平均 ${fmtScore(MS.summary.avg)} 分，第 ${MS.summary.best + 1} 球最好、第 ${MS.summary.worst + 1} 球最需要調整。`
+        : `每一球都和教師示範很接近，平均 ${fmtScore(MS.summary.avg)} 分。`),
+      h('div', { class: 'chips' }, MS.summary.issues.slice(0, 4).map((i) => h('span', { class: 'chip ' + (i.count / MS.summary.count >= 0.5 ? 'sev-high' : 'sev-low') }, `${i.part} ${i.count}/${MS.summary.count}`))))
+    : h('section', { class: 'lab-hero' },
+      h('div', { class: 'lab-hero-num' }, h('b', {}, String(D.items.length)), h('span', {}, '個差異')),
+      h('p', {}, D.items.length
+        ? `其中明顯 ${strong} 項。差最多的是「${D.items[0].part}」（${D.items[0].momentLabel}，${D.items[0].diffText}）。`
+        : '三個關鍵時刻都和教師示範很接近。'));
+
   show(
-    head('動作分析3D實驗室', tpl.name, back),
+    head('動作分析3D實驗室', multi ? `${tpl.name}｜第 ${shotIdx + 1} 球` : tpl.name, back),
+    headline,
+    multi ? shotPicker(MS, shotIdx, (i) => lab3dScreen(tpl, stu, MS, i, () => swingResult(tpl, stu, { noSave: true, shot: i }))) : null,
     h('div', { class: 'legend lab-legend' },
-      h('span', {}, h('i', { style: { background: '#4EA8FF' } }), '藍色：老師示範'),
-      h('span', {}, h('i', { style: { background: '#FF8A3D' } }), '橘色：你這次的動作')),
+      h('span', {}, h('i', { style: { background: '#4EA8FF' } }), '藍色：教師示範'),
+      h('span', {}, h('i', { style: { background: '#FF8A3D' } }), '橘色：學生動作')),
     holder,
-    h('p', { class: 'lab-note' }, '3D 深度為推估值，數據僅供參考。拖曳可旋轉視角，雙指或滾輪可縮放。'),
+    metricsBox,
+    h('p', { class: 'lab-note' }, '3D 深度為推估值，數據僅供參考。拖曳可旋轉視角，雙指或滾輪可縮放。紅字代表和教師差異較大。'),
     videoBox,
-    h('h2', {}, '藍色與橘色的不同之處'),
-    h('p', { class: 'field-hint' }, '依差異大小排序。點任一項，3D 畫面會跳到那個瞬間，並把相關部位標成紅色閃爍。'),
+    h('h2', {}, '學生與教師影片的不同之處'),
+    h('p', { class: 'field-hint' }, '依差異大小排序，每一項都附上練習方法。點上方的差異，3D 畫面會跳到那個瞬間，並把相關部位標成紅色閃爍。'),
     diffItems,
-    h('h2', {}, '和示範一致的地方'), matchItems,
+    h('h2', {}, '和教師示範一致的地方'), matchItems,
+    plan.length ? [h('h2', {}, '這一週的練習計畫'), practiceList(plan)] : null,
     h('div', { class: 'btn-row one' }, btn('回到一般結果頁', back, 'secondary')),
   );
   let viewer;
   try {
     viewer = LAB.createLab(holder, {
       skeletons: [
-        { seq: seqT, seqOverlay: seqT, color: 'blue', tag: '藍：示範', index: 'i' },
-        { seq: seqS, seqOverlay: seqSo, color: 'orange', tag: '橘：你', index: 'j' },
+        { seq: seqT, seqOverlay: seqT, color: 'blue', tag: '教師（藍）', index: 'i' },
+        { seq: seqS, seqOverlay: seqSo, color: 'orange', tag: '學生（橘）', index: 'j' },
       ],
       steps: path, moments, arcsFor,
       stepSeconds: R.T.dt || 1 / 30,
       facing: LAB.facingFrom(seqT, R.ts.start, tpl.hand),
       phaseLabel: (k) => LAB_PHASE(R.ts, path[k][0]),
-      timeLabel: (k) => `示範 ${R.T.t[path[k][0]].toFixed(2)} 秒｜你 ${R.S.t[path[k][1]].toFixed(2)} 秒`,
+      timeLabel: (k) => `教師 ${R.T.t[path[k][0]].toFixed(2)} 秒｜學生 ${R.S.t[path[k][1]].toFixed(2)} 秒`,
       onPos: (k, playing) => {
+        renderMetrics(k);
         const now = performance.now();
         if (!playing || now - lastSync > 200) { lastSync = now; syncVideos(k); }
       },
@@ -1271,7 +1353,7 @@ function lab3dPreview(series, seg, hand) {
     box.append(holder, h('p', { class: 'lab-note' }, '確認藍色骨架的動作正確後再儲存示範。3D 深度為推估值。'));
     try {
       viewer = LAB.createLab(holder, {
-        skeletons: [{ seq, color: 'blue', tag: '藍：示範', index: 'i' }],
+        skeletons: [{ seq, color: 'blue', tag: '教師（藍）', index: 'i' }],
         steps, moments, stepSeconds: series.dt || 1 / 30,
         facing: LAB.facingFrom(seq, seg.start, hand),
         phaseLabel: (k) => LAB_PHASE(seg, steps[k][0]),
@@ -1291,10 +1373,12 @@ async function reopenLab(r) {
   const entry = list.find((t) => t.id === r.tplId);
   if (!entry) return toast('這個示範已經被刪除，無法重新打開 3D 實驗室');
   openEntry(entry, (tpl) => {
-    let R;
-    try { R = A.compareSwing({ frames: tpl.frames, hand: tpl.hand }, { frames: r.frames, hand: r.hand }, r.fps || S.fps); }
+    const stu = { frames: r.frames, hand: r.hand, ar: r.ar, fps: r.fps, blob: null };
+    let MS;
+    try { MS = stu._shots = A.compareSwingShots({ frames: tpl.frames, hand: tpl.hand }, { frames: r.frames, hand: r.hand }, r.fps || S.fps); }
     catch (e) { return errorScreen('無法比對', e.message || '比對時發生錯誤。', historyHome); }
-    lab3dScreen(tpl, { frames: r.frames, hand: r.hand, ar: r.ar, blob: null }, R, () => { setTab('history'); historyHome(); });
+    const idx = MS.shots.length > 1 ? MS.summary.worst : 0;
+    lab3dScreen(tpl, stu, MS, idx, () => { setTab('history'); historyHome(); });
   }, historyHome);
 }
 

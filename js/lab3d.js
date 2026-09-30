@@ -205,8 +205,8 @@ export function createLab(container, opts) {
     caption.append(h('strong', {}, `${m ? m.label : ''}：差異最大的關節`),
       h('ul', {}, arcs.map((a) => h('li', {},
         h('span', { class: 'lab-part' }, a.part),
-        h('span', { class: 'lab-val blue' }, `藍 ${Math.round(a.values[0])}°`),
-        a.values[1] != null ? h('span', { class: 'lab-val orange' }, `橘 ${Math.round(a.values[1])}°`) : null,
+        h('span', { class: 'lab-val blue' }, `教師 ${Math.round(a.values[0])}°`),
+        a.values[1] != null ? h('span', { class: 'lab-val orange' }, `學生 ${Math.round(a.values[1])}°`) : null,
         a.values[1] != null ? h('span', { class: 'lab-diff' }, `差 ${Math.round(Math.abs(a.values[1] - a.values[0]))}°`) : null))));
   }
 

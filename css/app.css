@@ -358,3 +358,46 @@ dialog.sheet::backdrop { background: rgba(20, 56, 86, 0.5); }
 .lab-diff-go { font-size: 13px; color: var(--court); }
 .chip.sev-high { background: #FFD9D6; color: #8C1D18; }
 .chip.sev-low { background: #FDEBC8; color: #6B4A00; }
+
+/* ───────── v9：多球拆解、即時數據、練習方法 ───────── */
+.lab-hero { background: #0E1C2B; color: #E6EEF5; border-radius: var(--radius-m); padding: 16px 18px; margin-bottom: 14px; display: grid; gap: 8px; }
+.lab-hero-num { display: flex; align-items: baseline; gap: 8px; }
+.lab-hero-num b { font-family: var(--font-num); font-size: 48px; line-height: 1; color: #FF8A3D; }
+.lab-hero-num span { font-size: 20px; font-weight: 700; }
+.lab-hero p { margin: 0; line-height: 1.6; }
+.lab-hero .chips { margin: 0; }
+.shot-picker { margin: 0 0 16px; }
+.shot-sum { margin: 0 0 8px; color: var(--muted); font-size: 14.5px; }
+.shot-row { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; }
+.shot-chip {
+  flex: 0 0 auto; display: grid; gap: 1px; text-align: left; padding: 8px 12px; min-width: 88px; cursor: pointer;
+  border: 2px solid var(--rule); border-radius: var(--radius-s); background: var(--surface);
+}
+.shot-chip[aria-pressed="true"] { border-color: #FF8A3D; background: #FFF3EA; }
+.shot-no { font-weight: 700; font-size: 14px; }
+.shot-time { font-family: var(--font-num); font-size: 14px; color: var(--muted); }
+.shot-score { font-family: var(--font-num); font-size: 18px; font-weight: 600; }
+.shot-tag { font-size: 11.5px; border-radius: 999px; padding: 0 6px; justify-self: start; }
+.shot-tag.best { background: #D3EBDD; color: #145C3C; }
+.shot-tag.worst { background: #FFD9D6; color: #8C1D18; }
+.lab-metrics { overflow-x: auto; }
+.lab-metrics table { width: 100%; border-collapse: collapse; background: #0E1C2B; color: #DCE7F0; border-radius: var(--radius-m); overflow: hidden; font-size: 14px; }
+.lab-metrics td:first-child { white-space: normal; min-width: 6.5em; }
+.lab-metrics th, .lab-metrics td { padding: 6px 8px; text-align: left; white-space: nowrap; border-bottom: 1px solid rgba(120,175,230,0.15); }
+.lab-metrics th { font-weight: 500; color: #9FB3C6; font-size: 12.5px; }
+.lab-metrics th.blue { color: #4EA8FF; } .lab-metrics th.orange { color: #FF8A3D; }
+.lab-metrics td.num { font-family: var(--font-num); font-size: 16px; text-align: right; }
+.lab-metrics th:not(:first-child) { text-align: right; }
+.lab-metrics tr.warn td { color: #FF8B85; }
+.lab-diffs li { display: grid; gap: 0; }
+.lab-diffs li .drill { border: 1px solid var(--rule); border-top: 0; border-left: 4px solid var(--good); border-radius: 0 0 var(--radius-s) var(--radius-s); margin-top: -2px; }
+.drill { background: #F1F8F3; padding: 10px 14px; display: grid; gap: 4px; }
+.drill p { margin: 0; font-size: 14.5px; }
+.drill-head { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: baseline; }
+.drill-label { font-size: 12px; font-weight: 700; color: #145C3C; background: #D3EBDD; border-radius: 999px; padding: 1px 8px; }
+.drill-dose { font-family: var(--font-num); font-size: 15px; color: var(--muted); }
+.drill-cue { color: #145C3C; font-weight: 500; }
+.practice { margin: 0; padding-left: 1.4em; display: grid; gap: 12px; }
+.practice li { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-s); padding: 10px 14px; }
+.practice li p { margin: 4px 0 0; font-size: 14.5px; }
+.practice .detail { color: var(--muted); font-size: 13.5px; }
