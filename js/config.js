@@ -8,3 +8,7 @@ export const TEACHER_HASH = '9d84ab444195e2875a8b1b82e419cc021a1f35b1cf310d24d9e
 // 放在 GitHub Pages（網址是 https://帳號.github.io/專案名稱/）時會自動判斷，這裡保持空白即可。
 // 如果改用自己的網域，請填入帳號（owner）和專案名稱（repo）。
 export const LIBRARY = { owner: '', repo: '', branch: 'main' };
+
+// 練習紀錄後台（Google 試算表）。一般不需要改這裡：老師在 App 的「設定 → 練習紀錄後台」填好後會自動發布。
+// 只有在沒有設定 GitHub 權杖時，才需要把三個值填在這裡。
+export const TRACKING = { endpoint: '', bindUrl: '', clientId: '', domain: '' };

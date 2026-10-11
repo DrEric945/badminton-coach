@@ -200,3 +200,31 @@ export async function testToken(token) {
     return { ok: false, msg: '連線失敗：' + (e.detail || e.message) };
   }
 }
+
+// ───────── 共用設定（library/settings.json），例如練習紀錄後台的網址 ─────────
+export async function fetchSettings() {
+  const token = getToken(), r = repoInfo();
+  if (token && r) {
+    try {
+      const res = await api(`/repos/${r.owner}/${r.repo}/contents/${DIR}/settings.json?ref=${r.branch}`, { token, raw: true });
+      return await res.json();
+    } catch (e) {
+      if (e.status === 404) return {};
+      console.warn('用 API 讀取設定失敗，改讀網站檔案', e);
+    }
+  }
+  const res = await fetch(`${DIR}/settings.json?t=${Date.now()}`, { cache: 'no-store' });
+  if (res.status === 404) return {};
+  if (!res.ok) throw new Error('settings ' + res.status);
+  return res.json();
+}
+
+export async function publishSettings(patch) {
+  const token = getToken();
+  if (!token) throw Object.assign(new Error('尚未設定 GitHub 權杖'), { code: 'no-token' });
+  let cur = {};
+  try { cur = await fetchSettings(); } catch { cur = {}; }
+  const next = { ...cur, ...patch, updatedAt: Date.now() };
+  await commitFiles({ put: [{ path: `${DIR}/settings.json`, text: JSON.stringify(next, null, 2) }], token, message: '更新共用設定', mutateIndex: (i) => i });
+  return next;
+}

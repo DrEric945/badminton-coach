@@ -4,6 +4,7 @@ import * as DB from './store.js';
 import { TEACHER_HASH } from './config.js';
 import * as L from './library.js';
 import * as LAB from './lab3d.js';
+import * as TR from './tracking.js';
 import { $, h, toast, sleep, fitCanvas, containMap, drawPose, drawHand, lineChart, segmented, field, groupField, pickFile, fmtScore, cssVar } from './ui.js';
 
 // ───────── 設定 ─────────
@@ -14,7 +15,7 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
-const APP_VERSION = 'v9（2026-09-30）';
+const APP_VERSION = 'v13（2026-10-11）';
 function getRole() { try { return localStorage.getItem('swing-coach-role'); } catch { return null; } }
 function isTeacher() { return getRole() === 'teacher'; }
 function setRole(role) {
@@ -59,8 +60,13 @@ const main = $('#main');
 let cleanups = [];
 function onLeave(fn) { cleanups.push(fn); }
 function leave() { const c = cleanups; cleanups = []; c.forEach((f) => { try { f(); } catch (e) { console.warn(e); } }); }
+// 練習相關畫面在 show() 之前呼叫 practiceScreen()，練習時間只在這些畫面累計
+let practiceNext = false;
+function practiceScreen() { practiceNext = true; }
 function show(...nodes) {
   leave();
+  TR.setPracticing(practiceNext && getRole() === 'student');
+  practiceNext = false;
   main.replaceChildren(...nodes.flat(Infinity).filter(Boolean));
   window.scrollTo(0, 0);
 }
@@ -85,7 +91,11 @@ function welcome() {
   show(
     head('歡迎使用我的羽球教練', '請先選擇你的身分。之後可以在右上角「設定」切換。'),
     h('div', { class: 'role-pick' },
-      h('button', { class: 'role-card', type: 'button', onclick: () => { setRole('student'); toast('已設定為學生身分'); location.hash = 'swing'; route(); } },
+      h('button', { class: 'role-card', type: 'button', onclick: async () => {
+        setRole('student'); toast('已設定為學生身分'); location.hash = 'swing';
+        await TR.loadConfig();
+        if (TR.enabled() && !TR.account()) accountScreen({ first: true }); else route();
+      } },
         h('strong', {}, '我是學生'),
         h('span', {}, '選老師的示範影片，錄下自己的揮拍和握拍來比對。')),
       h('button', { class: 'role-card', type: 'button', onclick: () => teacherLogin() },
@@ -166,6 +176,7 @@ async function swingHome() {
   const list = await templates('swing');
   show(
     head('揮拍比對', '選一段老師的示範，再錄下你自己的揮拍，系統會比對關節角度、揮拍軌跡和速度。'),
+    accountBanner(),
     offlineNote(),
     list.length
       ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, () => openEntry(t, swingPrep, swingHome))))
@@ -176,6 +187,7 @@ async function swingHome() {
 }
 
 function swingPrep(tpl) {
+  practiceScreen();
   const url = tpl.video ? URL.createObjectURL(tpl.video) : null;
   const media = url
     ? h('video', { class: 'stage-media', src: url, muted: true, playsInline: true, loop: true, autoplay: true })
@@ -207,6 +219,7 @@ function studentAnalyze(tpl, blob) {
 
 // ───────── 相機錄影 ─────────
 async function captureSwing({ title, back, onBlob }) {
+  practiceScreen();
   const video = h('video', { class: 'stage-media', muted: true, playsInline: true });
   const canvas = h('canvas', { class: 'stage-overlay' });
   const hint = h('div', { class: 'stage-hint' }, '正在開啟鏡頭…');
@@ -248,6 +261,7 @@ async function captureSwing({ title, back, onBlob }) {
   function loop() {
     if (!running) return;
     requestAnimationFrame(loop);
+    if (recording) TR.ping();
     if (!pose || video.readyState < 2 || busy) return;
     busy = true;
     try {
@@ -316,6 +330,7 @@ async function captureSwing({ title, back, onBlob }) {
 
 // ───────── 選取片段並擷取骨架 ─────────
 async function trimAnalyze(blob, { title, back, onFrames }) {
+  practiceScreen();
   const url = URL.createObjectURL(blob);
   const video = h('video', { class: 'stage-media', src: url, muted: true, playsInline: true, preload: 'auto', controls: true });
   const canvas = h('canvas', { class: 'stage-overlay' });
@@ -367,6 +382,7 @@ async function trimAnalyze(blob, { title, back, onFrames }) {
       frames = await V.extractPose(video, {
         start, end, fps: S.fps, quality: S.quality, isCancelled: () => cancelled,
         onFrame: (k, total, r) => {
+          TR.ping();
           bar.style.width = (100 * k / total).toFixed(1) + '%';
           progText.textContent = `擷取動作節點中 ${Math.round(100 * k / total)}%`;
           const { ctx, W, H, dpr } = fitCanvas(canvas);
@@ -462,6 +478,7 @@ function notesList(items, good) {
 
 // ───────── 揮拍結果 ─────────
 async function swingResult(tpl, stu, opts = {}) {
+  practiceScreen();
   let MS;
   try {
     MS = stu._shots || (stu._shots = A.compareSwingShots({ frames: tpl.frames, hand: tpl.hand }, { frames: stu.frames, hand: stu.hand }, stu.fps || S.fps));
@@ -486,6 +503,11 @@ async function swingResult(tpl, stu, opts = {}) {
     tips: multi ? MS.summary.issues.slice(0, 3).map((i) => `${i.part}（${i.count}/${MS.summary.count} 球）`) : R.improve.slice(0, 3).map((n) => n.text),
     frames: stu.frames, hand: stu.hand, ar: stu.ar, fps: stu.fps || S.fps,
   }).catch(console.warn);
+  if (!opts.noSave) TR.logAnalysis({
+    type: 'swing', template: tpl.name, score: multi ? MS.summary.avg : R.total, shots: MS.shots.length,
+    videoSec: stu.frames.length ? stu.frames[stu.frames.length - 1].t - stu.frames[0].t : 0,
+    topIssue: multi ? (MS.summary.issues[0] ? `${MS.summary.issues[0].part}（${MS.summary.issues[0].count}/${MS.summary.count} 球）` : '') : (R.improve[0] ? R.improve[0].text : ''),
+  });
 
   const nT = A.normalizePoseSeq(R.T.frames, tpl.ar, tpl.hand);
   const nS = A.normalizePoseSeq(R.S.frames, stu.ar, stu.hand);
@@ -598,6 +620,7 @@ async function gripHome() {
   const list = await templates('grip');
   show(
     head('握拍比對', '跟著引導，從兩個角度拍下握拍的手，並標出握把頭的位置。系統會比對手指彎曲、拇指位置和握把方向。手腕轉動提供老師的示範影片觀看。'),
+    accountBanner(),
     offlineNote(),
     list.length
       ? h('div', { class: 'tpl-list' }, list.map((t) => tplRow(t, () => openEntry(t, gripPrep, gripHome))))
@@ -619,6 +642,7 @@ function demoVideoBlock(tpl) {
 }
 
 function gripPrep(tpl) {
+  practiceScreen();
   const g = tpl.grip;
   show(
     head(tpl.name, null, gripHome),
@@ -651,6 +675,7 @@ function holdRing() {
 }
 
 async function gripCapture({ title, tpl, hand, role, back, onDone }) {
+  practiceScreen();
   const data = { hand, views: {}, rotationVideo: null };
   const ref = tpl && tpl.grip;
   const GRIP_STEPS = role === 'teacher' ? GRIP_STEPS_ALL : GRIP_STEPS_ALL.filter((s) => s.key !== 'rotate');
@@ -869,12 +894,14 @@ function snapCanvas(view, hand, color, tag) {
 }
 
 function gripResult(tpl, data) {
+  practiceScreen();
   let R;
   try { R = A.compareGrip(tpl.grip, data); } catch (e) { return errorScreen('無法比對', e.message, () => gripPrep(tpl)); }
   DB.put('history', {
     id: DB.uid(), type: 'grip', tplId: tpl.id, tplName: tpl.name, date: Date.now(),
     total: R.total, parts: R.parts.map((p) => ({ label: p.label, score: p.score })), tips: R.improve.slice(0, 3).map((n) => n.text),
   }).catch(console.warn);
+  TR.logAnalysis({ type: 'grip', template: tpl.name, score: R.total, shots: 0, videoSec: 0, topIssue: R.improve[0] ? R.improve[0].text : '' });
 
   const JOINT_ROWS = [
     ['idxMCP', '食指根部彎曲'], ['idxPIP', '食指中段彎曲'], ['midMCP', '中指根部彎曲'], ['midPIP', '中指中段彎曲'],
@@ -1207,6 +1234,7 @@ function fmtMetric(v, unit) {
 const LAB_PHASE = (ts, i) => (i < ts.top ? '準備' : i < ts.peak ? '引拍到前揮' : i === ts.peak ? '擊球瞬間' : '隨揮收拍');
 
 function lab3dScreen(tpl, stu, MS, shotIdx, back) {
+  practiceScreen();
   const R = MS.shots[shotIdx].R;
   const multi = MS.shots.length > 1;
   const D = A.labDifferences(R);
@@ -1384,10 +1412,12 @@ async function reopenLab(r) {
 
 // ───────── 練習紀錄 ─────────
 async function historyHome() {
+  if (isTeacher()) return classStats();
   const rows = (await DB.all('history')).sort((a, b) => b.date - a.date);
   const fmt = new Intl.DateTimeFormat('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   show(
     head('練習紀錄', '每次比對的分數都會記錄在這台裝置上。'),
+    studentTotals(),
     rows.length
       ? h('div', {}, rows.map((r) => h('div', { class: 'history-row' },
         h('div', {},
@@ -1401,6 +1431,368 @@ async function historyHome() {
         await DB.clear('history'); historyHome();
       }, 'danger')))
       : emptyState('還沒有練習紀錄', '完成一次揮拍或握拍比對後，分數就會出現在這裡。', ['開始揮拍比對', () => { location.hash = 'swing'; }]),
+  );
+}
+
+// ───────── 練習紀錄：學生帳號 ─────────
+// 複製文字；瀏覽器不允許時，跳出可長按選取的對話框
+async function copyText(text, okMsg) {
+  try { await navigator.clipboard.writeText(text); toast(okMsg); return; } catch { /* 改用下面的方式 */ }
+  const ta = h('textarea', { readonly: true, rows: 3, style: { width: '100%', fontSize: '14px', padding: '8px', border: '2px solid #CBD4D0', borderRadius: '4px' } }, text);
+  const dlg = h('dialog', { class: 'sheet' }, h('div', { class: 'sheet-body' },
+    h('div', { class: 'sheet-head' }, h('h2', {}, '複製網址'), btn('關閉', () => dlg.close(), 'quiet')),
+    h('p', { class: 'field-hint' }, '這個瀏覽器不能自動複製，請長按下面的網址，選「全選」後「複製」。'), ta));
+  document.body.append(dlg);
+  dlg.addEventListener('close', () => dlg.remove());
+  dlg.showModal(); ta.focus(); ta.select();
+}
+
+function accountBanner() {
+  if (getRole() !== 'student' || !TR.enabled() || TR.account()) return null;
+  return h('div', { class: 'note-box warn', style: { marginBottom: '14px' } },
+    h('p', { style: { margin: '0 0 10px' } }, '還沒綁定學校 Google 帳號，老師看不到你的練習次數和練習時間。'),
+    btn('綁定學校帳號', () => accountScreen({}), 'secondary'));
+}
+
+function studentTotals() {
+  if (!TR.enabled()) return null;
+  const a = TR.account(), q = TR.queue().length;
+  return h('section', { class: 'trk-totals' },
+    h('div', {}, h('span', { class: 'trk-k' }, '這台裝置累計練習時間'), h('b', {}, TR.fmtMinutes(TR.totalSeconds()))),
+    h('p', { class: 'field-hint' }, a
+      ? `已綁定 ${a.email}。${q ? `還有 ${q} 筆紀錄等網路連線後送給老師。` : '紀錄都已送給老師。'}`
+      : '還沒綁定學校帳號，紀錄會先存在這台裝置，綁定後自動補送給老師。'),
+    a ? null : btn('綁定學校帳號', () => accountScreen({}), 'secondary small'));
+}
+
+function accountScreen({ first = false } = {}) {
+  const back = () => { setTab('swing'); route(); };
+  const a = TR.account();
+  const prof = TR.profile();
+  const cls = h('input', { type: 'text', value: prof.className, placeholder: '例：體育一甲', maxlength: 40, autocomplete: 'off' });
+  const sid = h('input', { type: 'text', value: prof.studentId, placeholder: '例：1130123', maxlength: 40, inputmode: 'text', autocomplete: 'off' });
+  const saveProf = () => { TR.setProfile({ className: cls.value, studentId: sid.value }); };
+  cls.addEventListener('change', saveProf); sid.addEventListener('change', saveProf);
+  const msg = h('div', { role: 'status' });
+  const err = (e) => msg.replaceChildren(h('div', { class: 'note-box warn' }, TR.errorText(e)));
+  const profileBox = [
+    h('h2', {}, '班級與學號'),
+    h('p', { class: 'field-hint' }, '方便老師對照名單。學號已依信箱自動填入時，請確認是否正確。'),
+    field('班級', cls), field('學號', sid),
+  ];
+  const privacy = h('div', { class: 'note-box' },
+    h('strong', {}, '老師會看到的資料'),
+    h('p', { style: { margin: '6px 0 0' } }, '學校信箱、姓名、班級、學號，以及每次比對的時間、示範名稱、分數、球數、主要問題和練習時間。你的影片不會上傳，動作分析仍在這台手機上完成。'));
+
+  if (a) {
+    const codeOut = h('div');
+    show(
+      head('我的帳號與練習時間', null, back),
+      h('section', { class: 'trk-account' },
+        h('div', { class: 'trk-k' }, '已綁定的學校帳號'),
+        h('b', {}, a.name), h('div', {}, a.email)),
+      studentTotals(),
+      profileBox,
+      h('div', { class: 'btn-row one' }, btn('儲存班級與學號', async () => {
+        saveProf();
+        try { await TR.syncProfile(); toast('已儲存，老師那邊也已更新'); } catch { toast('已儲存，連上網路後會自動送給老師'); }
+      })),
+      h('h2', {}, '在另一台裝置使用'),
+      h('p', { class: 'field-hint' }, '例如已加入主畫面的 App 按 Google 登入沒有反應時：在這裡產生綁定碼，到另一台裝置的「綁定學校帳號」頁輸入，10 分鐘內有效。'),
+      btn('產生綁定碼', async () => {
+        try { const r = await TR.issueCode(); codeOut.replaceChildren(h('p', { class: 'trk-code' }, r.code), h('p', { class: 'field-hint' }, '10 分鐘內有效，只能使用一次。')); }
+        catch (e) { codeOut.replaceChildren(h('div', { class: 'note-box warn' }, TR.errorText(e))); }
+      }, 'secondary'),
+      codeOut,
+      privacy,
+      h('div', { class: 'section-actions', style: { marginTop: '18px' } }, btn('解除這台裝置的綁定', async () => {
+        if (!confirm('解除後，這台裝置的練習不會再送給老師，直到重新綁定。要解除嗎？')) return;
+        await TR.unlink(); toast('已解除綁定'); accountScreen({});
+      }, 'danger')),
+    );
+    return;
+  }
+
+  const gbtn = h('div', { class: 'trk-gbtn' }, h('p', { class: 'field-hint' }, '載入 Google 登入…'));
+  const codeIn = h('input', { type: 'text', inputmode: 'numeric', maxlength: 6, placeholder: '6 位數字', autocomplete: 'one-time-code' });
+  const done = () => {
+    toast('已綁定學校帳號');
+    accountScreen({});
+  };
+  const cfg = TR.config() || {};
+  const bindHref = cfg.bindUrl ? cfg.bindUrl + (cfg.bindUrl.includes('?') ? '&' : '?') + 'action=bind' : '';
+  show(
+    head('綁定學校 Google 帳號', '證明一次你的學校帳號，老師就能看到你的練習次數和練習時間。', first ? null : back),
+    privacy,
+    bindHref ? [
+      h('h2', {}, '第 1 步：取得綁定碼'),
+      h('p', { class: 'field-hint' }, '按下面的按鈕會開啟學校帳號的綁定頁。請用學校的 Google 帳號登入，頁面會顯示 6 位數綁定碼。'),
+      h('div', { class: 'section-actions', style: { margin: '0' } },
+        h('a', { class: 'btn', href: bindHref, target: '_blank', rel: 'noopener' }, '開啟學校帳號綁定頁'),
+        btn('複製綁定頁網址', () => copyText(bindHref, '已複製，請貼到無痕視窗的網址列'), 'secondary')),
+      h('p', { class: 'field-hint' }, '瀏覽器同時登入多個 Google 帳號而打不開，或顯示的不是你的學校帳號時：按「複製綁定頁網址」，開一個無痕視窗（iPhone Safari 的「私密瀏覽」、Chrome 的「無痕分頁」），把網址貼上，只登入學校帳號。'),
+      h('h2', {}, '第 2 步：輸入綁定碼'),
+    ] : [
+      cfg.clientId ? null : h('div', { class: 'note-box warn' }, '老師還沒有設定學生綁定頁，請先輸入老師或其他裝置給的綁定碼。'),
+      h('h2', {}, '輸入綁定碼'),
+    ],
+    h('p', { class: 'field-hint' }, bindHref ? '回到這裡，輸入綁定頁上的 6 位數字。已經在其他裝置綁定過的話，也可以用那台裝置「我的帳號」產生的綁定碼。' : '已經在其他裝置綁定過：到那台裝置的「我的帳號」產生綁定碼，在這裡輸入。'),
+    h('div', { class: 'trk-code-row' }, codeIn, btn('綁定', async () => {
+      if (!/^\d{6}$/.test(codeIn.value.trim())) return toast('請輸入 6 位數的綁定碼');
+      try { await TR.redeemCode(codeIn.value.trim()); done(); } catch (e) { err(e); }
+    }, 'secondary')),
+    msg,
+    cfg.clientId ? [
+      h('h2', {}, bindHref ? '或用 Google 帳號登入' : '用 Google 帳號登入'),
+      h('p', { class: 'field-hint' }, '請選擇學校的帳號，其他 Google 帳號無法綁定。iPhone 主畫面上的 App 按登入沒有反應時，請改用綁定碼。'),
+      gbtn,
+    ] : null,
+    first ? h('div', { class: 'section-actions', style: { marginTop: '22px' } }, btn('稍後再說', () => {
+      toast('之後可以在「設定」綁定，練習紀錄會先存在這台裝置'); route();
+    }, 'quiet')) : null,
+  );
+  if (cfg.clientId) TR.renderSignIn(gbtn, { onDone: done, onError: (e) => { if (e.code === 'not-configured' || e.code === 'network') gbtn.replaceChildren(h('p', { class: 'field-hint' }, e.code === 'network' ? '無法載入 Google 登入，請確認網路連線。' : TR.errorText(e))); else err(e); } });
+}
+
+// ───────── 練習紀錄：老師 ─────────
+function trackingSettings() {
+  if (!requireTeacher()) return;
+  setTab('history');
+  const c = TR.config() || {};
+  const ep = h('input', { type: 'text', value: c.endpoint || '', placeholder: 'https://script.google.com/macros/s/…/exec', autocomplete: 'off' });
+  const bind = h('input', { type: 'text', value: c.bindUrl || '', placeholder: 'https://script.google.com/macros/s/…/exec', autocomplete: 'off' });
+  const cid = h('input', { type: 'text', value: c.clientId || '', placeholder: '選填：….apps.googleusercontent.com', autocomplete: 'off' });
+  const dom = h('input', { type: 'text', value: c.domain || '', placeholder: '例：g2.usc.edu.tw', autocomplete: 'off' });
+  const key = h('input', { type: 'password', value: TR.teacherKey(), autocomplete: 'off' });
+  const msg = h('div', { role: 'status' });
+  const say = (text, ok) => msg.replaceChildren(h('div', { class: 'note-box' + (ok ? '' : ' warn') }, text));
+  const check = async () => {
+    const url = ep.value.trim();
+    if (!/^https:\/\/script\.google\.com\/macros\/s\/.+\/exec$/.test(url)) return say('網址格式不對，應該是 https://script.google.com/macros/s/…/exec。', false);
+    say('檢查中…', true);
+    try {
+      const r = await TR.pingEndpoint(url);
+      if (!r.ok) return say('後台沒有正常回應，請確認部署時「存取權」選「所有人」。', false);
+      say(r.configured ? '連線成功，後台設定完整。' : `已連上後台，但程式碼的設定還沒完成：${(r.problems || []).join('；')}。`, r.configured);
+      return r.configured;
+    } catch (e) { say('連不上這個網址。請確認是「網頁應用程式」的網址，且部署時存取權選「所有人」。', false); return false; }
+  };
+  const save = async () => {
+    TR.setTeacherKey(key.value.trim());
+    const ok = await check();
+    if (ok === undefined) return;
+    const b = bind.value.trim();
+    if (!b && !cid.value.trim()) return say('「學生綁定頁網址」和「OAuth 用戶端 ID」至少要填一個，學生才能綁定學校帳號。', false);
+    if (b && !/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+|macros)\/s\/.+\/exec$/.test(b)) return say('學生綁定頁網址格式不對，應該是 https://script.google.com/…/exec。', false);
+    if (b && b === ep.value.trim()) return say('學生綁定頁要用「第二個部署作業」（存取權選學校機構內所有人）的網址，不能和網頁應用程式網址相同。', false);
+    if (cid.value.trim() && !/\.apps\.googleusercontent\.com$/.test(cid.value.trim())) return say('OAuth 用戶端 ID 格式不對；不使用 Google 登入按鈕時請保持空白。', false);
+    if (!L.getToken()) return say('查詢金鑰已存在這台裝置。要讓學生的 App 也知道後台網址，請先在示範影片庫設定 GitHub 權杖，再按一次儲存。', false);
+    try {
+      await L.publishSettings({ tracking: { endpoint: ep.value.trim(), bindUrl: b, clientId: cid.value.trim(), domain: dom.value.trim() } });
+      await TR.loadConfig();
+      say('已儲存並發布。學生重新打開 App 約 1 分鐘後就會看到「綁定學校帳號」。', true);
+    } catch (e) { console.error(e); say(publishError(e), false); }
+  };
+  show(
+    head('練習紀錄後台設定', '把 Google 試算表後台的資料填進來，學生的練習次數與時間就會自動送到試算表。設定方式請看 README 的「練習紀錄後台設定」。', () => { setTab('history'); historyHome(); }),
+    field('網頁應用程式網址', ep, '第一個部署作業（存取權：所有人）的網址'),
+    field('學生綁定頁網址', bind, '第二個部署作業（存取權：學校機構內所有人）的網址。學生用它取得綁定碼，不需要 Google Cloud'),
+    field('OAuth 用戶端 ID（選填）', cid, '學校可以使用 Google Cloud 時才填，要和程式碼裡的 CLIENT_ID 相同；不填則只用綁定頁'),
+    field('學校信箱網域', dom, '要和程式碼裡的 SCHOOL_DOMAIN 相同'),
+    field('查詢金鑰', key, '和程式碼裡的 TEACHER_KEY 相同。只存在這台裝置，不會發布給學生'),
+    h('div', { class: 'btn-row' }, btn('檢查連線', check, 'secondary'), btn('儲存並發布', save)),
+    msg,
+  );
+}
+
+let statsSort = 'last', statsClass = '', statsIdle = false, statsGroup = '', statsFrom = '', statsTo = '';
+const fmtMS = (o, unit = '') => (!o || o.mean == null ? '—' : o.sd == null ? `${o.mean}${unit}` : `${o.mean} ± ${o.sd}${unit}`);
+function csvDownload(name, rows) {
+  const text = '﻿' + rows.map((r) => r.map((x) => {
+    const v = x == null ? '' : String(x);
+    return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  }).join(',')).join('\r\n');
+  const a = h('a', { href: URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' })), download: name });
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+}
+const GROUP_ROWS = [
+  ['學生人數', (g) => g.n],
+  ['已綁定帳號', (g) => g.bound],
+  ['有練習人數', (g) => g.active],
+  ['近 7 天有練習', (g) => g.active7],
+  ['比對總次數', (g) => g.totalAnalyses],
+  ['每人比對次數', (g) => fmtMS(g.analyses)],
+  ['累計練習時間（分）', (g) => g.totalMinutes],
+  ['每人練習時間（分）', (g) => fmtMS(g.minutes)],
+  ['每人平均分數', (g) => fmtMS(g.avgScore)],
+  ['第一次分數', (g) => fmtMS(g.firstScore)],
+  ['最近一次分數', (g) => fmtMS(g.lastScore)],
+  ['進步分數（最近 − 第一次）', (g) => fmtMS(g.gain)],
+];
+
+async function classStats() {
+  if (!TR.enabled() || !TR.teacherKey()) {
+    show(head('全班練習統計', '設定練習紀錄後台後，這裡會顯示每位學生與各組的練習次數、練習時間與分數。'),
+      h('div', { class: 'note-box warn' }, TR.enabled() ? '這台裝置還沒輸入查詢金鑰。' : '還沒設定練習紀錄後台。'),
+      h('div', { class: 'btn-row one' }, btn('練習紀錄後台設定', trackingSettings)));
+    return;
+  }
+  const body = h('div', {}, h('p', { class: 'progress-text' }, '讀取全班資料中…'));
+  show(head('全班練習統計', '資料來自 Google 試算表。組別依「學生名單」對應，學生每完成一次比對就會更新。'), body);
+  let data;
+  try { data = await TR.teacherSummary({ from: statsFrom, to: statsTo }); }
+  catch (e) {
+    body.replaceChildren(h('div', { class: 'note-box warn' }, e.code === 'bad-key' ? '查詢金鑰不正確，請到「練習紀錄後台設定」重新輸入。' : '讀取失敗，請確認網路連線與後台設定。'),
+      h('div', { class: 'btn-row' }, btn('重新整理', classStats, 'secondary'), btn('練習紀錄後台設定', trackingSettings, 'secondary')));
+    return;
+  }
+  const all = data.students;
+  const groups = data.groups;
+  const groupNames = groups.map((g) => g.name).filter((n) => n !== '全部合併');
+  if (statsGroup && !groupNames.includes(statsGroup)) statsGroup = '';
+  const classes = [...new Set(all.map((s) => s.className).filter(Boolean))].sort();
+  const fmtD = new Intl.DateTimeFormat('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const fmtMin = (m) => TR.fmtMinutes((Number(m) || 0) * 60);
+  const rangeText = statsFrom || statsTo ? `${statsFrom || '最早'} 到 ${statsTo || '今天'}` : '全部期間';
+
+  // 期間
+  const fromIn = h('input', { type: 'date', value: statsFrom, 'aria-label': '開始日期' });
+  const toIn = h('input', { type: 'date', value: statsTo, 'aria-label': '結束日期' });
+  const period = h('section', { class: 'trk-period' },
+    h('span', { class: 'trk-k' }, '統計期間'),
+    h('div', { class: 'trk-period-row' }, fromIn, h('span', {}, '到'), toIn,
+      btn('套用', () => { statsFrom = fromIn.value; statsTo = toIn.value; classStats(); }, 'secondary small'),
+      statsFrom || statsTo ? btn('全部期間', () => { statsFrom = ''; statsTo = ''; classStats(); }, 'quiet small') : null),
+    h('p', { class: 'field-hint' }, '例如只統計實驗介入期間。人數與綁定狀態不受期間影響；「近 7 天」以今天往前算。'));
+
+  // 組別比較
+  const compare = h('section', {},
+    h('h2', {}, `組別比較（${rangeText}）`),
+    data.rosterCount ? null : h('div', { class: 'note-box warn' }, '還沒有匯入學生名單，所有學生都會列在「未分組」。請先匯入名單。'),
+    h('div', { class: 'table-wrap' }, h('table', { class: 'detail-table trk-groups' },
+      h('thead', {}, h('tr', {}, h('th', {}, '項目'), groups.map((g) => h('th', { class: 'num ' + (g.name === '全部合併' ? 'all' : '') }, g.name)))),
+      h('tbody', {}, GROUP_ROWS.map(([label, f]) => h('tr', {}, h('td', {}, label), groups.map((g) => h('td', { class: 'num ' + (g.name === '全部合併' ? 'all' : '') }, String(f(g))))))))),
+    h('p', { class: 'field-hint' }, '「M ± SD」是每位學生數值的平均與標準差。分數類只計算有分數的學生；進步分數只計算比對過兩次以上的學生。未綁定帳號的學生次數與時間以 0 計入。'),
+    h('div', { class: 'section-actions' },
+      btn('下載組別統計（CSV）', () => csvDownload(`組別統計-${rangeText}.csv`,
+        [['項目', ...groups.map((g) => g.name)], ...GROUP_ROWS.map(([label, f]) => [label, ...groups.map((g) => f(g))])]), 'secondary small'),
+      btn('下載學生明細（CSV）', () => csvDownload(`學生明細-${rangeText}.csv`,
+        [['組別', '學號', '姓名', '班級', '學校信箱', '在名單中', '已綁定', '比對次數', '揮拍次數', '握拍次數', '總球數', '累計練習時間（分）', '平均分數', '最高分', '第一次分數', '最近一次分數', '進步分數', '第一次練習', '最近練習', '近 7 天次數', '近 7 天練習（分）'],
+          ...all.map((s) => [s.group, s.studentId, s.name, s.className, s.email, s.inRoster ? '是' : '否', s.bound ? '是' : '否', s.analyses, s.swings, s.grips, s.shots, s.minutes, s.avg, s.best, s.firstScore, s.lastScore, s.gain,
+            s.first ? fmtD.format(new Date(s.first)) : '', s.last ? fmtD.format(new Date(s.last)) : '', s.weekCount, s.weekMinutes])]), 'secondary small')));
+
+  // 學生列表
+  const tableBox = h('div');
+  const render = () => {
+    let list = all.filter((s) => (!statsGroup || s.group === statsGroup) && (!statsClass || s.className === statsClass));
+    if (statsIdle) list = list.filter((s) => !s.weekCount);
+    const by = {
+      last: (a, b) => (b.last || '').localeCompare(a.last || ''),
+      count: (a, b) => b.analyses - a.analyses,
+      minutes: (a, b) => b.minutes - a.minutes,
+      avg: (a, b) => (b.avg ?? -1) - (a.avg ?? -1),
+      id: (a, b) => String(a.studentId).localeCompare(String(b.studentId), 'zh-TW', { numeric: true }),
+    }[statsSort];
+    list.sort(by);
+    tableBox.replaceChildren(list.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'detail-table trk-table' },
+      h('thead', {}, h('tr', {}, h('th', {}, '學生'), h('th', { class: 'num' }, '比對次數'), h('th', { class: 'num' }, '累計練習'), h('th', { class: 'num' }, '近 7 天'), h('th', { class: 'num' }, '平均／進步'), h('th', {}, '最近練習'))),
+      h('tbody', {}, list.map((s) => h('tr', { class: s.weekCount ? '' : 'idle' },
+        h('td', { class: 'trk-who' },
+          h('b', {}, s.name || '（未填姓名）'), ' ',
+          h('span', { class: 'chip grp ' + (s.group === '實驗組' ? 'exp' : s.group === '對照組' ? 'ctl' : 'none') }, s.group),
+          s.bound ? null : h('span', { class: 'chip sev-low' }, '未綁定帳號'),
+          s.inRoster ? null : h('span', { class: 'chip sev-low' }, '不在名單'),
+          h('div', { class: 'detail' }, [s.className, s.studentId].filter(Boolean).join('｜') || s.email)),
+        h('td', { class: 'num', 'data-label': '比對次數' }, `${s.analyses}`, h('div', { class: 'detail' }, `揮拍 ${s.swings}・握拍 ${s.grips}`)),
+        h('td', { class: 'num', 'data-label': '累計練習' }, fmtMin(s.minutes)),
+        h('td', { class: 'num', 'data-label': '近 7 天' }, `${s.weekCount} 次`, h('div', { class: 'detail' }, fmtMin(s.weekMinutes))),
+        h('td', { class: 'num', 'data-label': '平均／進步' }, s.avg == null ? '—' : `${s.avg}`, h('div', { class: 'detail' }, s.gain == null ? '' : `${s.gain > 0 ? '+' : ''}${s.gain} 分`)),
+        h('td', { 'data-label': '最近練習' }, s.last ? fmtD.format(new Date(s.last)) : (s.bound ? '尚未練習' : '尚未綁定')))))))
+      : h('p', { class: 'field-hint' }, statsIdle ? '這個範圍內每位學生近 7 天都有練習。' : '這個範圍內沒有學生。'));
+  };
+  const sel = (opts, cur, onPick, label) => {
+    const el = h('select', { 'aria-label': label }, opts.map(([v, t]) => h('option', { value: v }, t)));
+    el.value = cur; el.addEventListener('change', () => { onPick(el.value); render(); });
+    return el;
+  };
+  const idleCb = h('input', { type: 'checkbox' }); idleCb.checked = statsIdle;
+  idleCb.addEventListener('change', () => { statsIdle = idleCb.checked; render(); });
+
+  body.replaceChildren(
+    period,
+    compare,
+    h('h2', {}, '學生明細'),
+    h('div', { class: 'trk-filters' },
+      sel([['', '全部組別'], ...groupNames.map((g) => [g, g])], statsGroup, (v) => { statsGroup = v; }, '組別'),
+      sel([['', '全部班級'], ...classes.map((c) => [c, c])], classes.includes(statsClass) ? statsClass : '', (v) => { statsClass = v; }, '班級'),
+      sel([['last', '依最近練習'], ['count', '依比對次數'], ['minutes', '依練習時間'], ['avg', '依平均分數'], ['id', '依學號']], statsSort, (v) => { statsSort = v; }, '排序'),
+      h('label', { class: 'trk-check' }, idleCb, '只看 7 天內沒有練習')),
+    tableBox,
+    h('p', { class: 'field-hint' }, `學生名單：${data.rosterCount} 人。更新時間：${fmtD.format(new Date(data.generatedAt))}。練習時間只計算學生在練習畫面、有操作時的時間。`),
+    h('div', { class: 'section-actions' },
+      btn('匯入學生名單', rosterImport, 'secondary'),
+      h('a', { class: 'btn secondary', href: data.sheetUrl, target: '_blank', rel: 'noopener' }, '打開 Google 試算表'),
+      btn('重新整理', classStats, 'secondary'),
+      btn('練習紀錄後台設定', trackingSettings, 'quiet')),
+  );
+  render();
+}
+
+// 匯入實驗組／對照組名單：從 Excel 或 Google 試算表複製貼上，或選擇 CSV 檔
+function parseRoster(text) {
+  const lines = text.replace(/\r/g, '').split('\n').map((l) => l.trim()).filter(Boolean);
+  const rows = lines.map((l) => (l.includes('\t') ? l.split('\t') : l.split(',')).map((x) => x.trim().replace(/^"|"$/g, '')));
+  if (rows.length && /學號|student/i.test(rows[0][0] || '')) rows.shift();
+  return rows.map((r) => [r[0] || '', r[1] || '', r[2] || '', r[3] || '', r[4] || '']).filter((r) => r[0] || r[4]);
+}
+function rosterImport() {
+  if (!requireTeacher()) return;
+  setTab('history');
+  const ta = h('textarea', { rows: 10, class: 'trk-paste', placeholder: '學號\t姓名\t組別\t班級\t學校信箱（選填）\n1130101\t陳一\t實驗組\t體育一甲\n1130201\t黃四\t對照組\t體育一乙' });
+  const preview = h('div');
+  const msg = h('div', { role: 'status' });
+  let rows = [];
+  const update = () => {
+    rows = parseRoster(ta.value);
+    if (!rows.length) { preview.replaceChildren(); return; }
+    const counts = {};
+    rows.forEach((r) => { const g = r[2] || '未分組'; counts[g] = (counts[g] || 0) + 1; });
+    const ids = rows.map((r) => r[0]).filter(Boolean);
+    const dup = ids.filter((x, i) => ids.indexOf(x) !== i);
+    const noGroup = rows.filter((r) => !r[2]).length;
+    preview.replaceChildren(...[
+      h('p', {}, `共 ${rows.length} 人：`, Object.entries(counts).map(([g, n]) => h('span', { class: 'chip grp ' + (g === '實驗組' ? 'exp' : g === '對照組' ? 'ctl' : 'none') }, `${g} ${n} 人`))),
+      dup.length ? h('div', { class: 'note-box warn' }, `學號重複：${[...new Set(dup)].join('、')}`) : null,
+      noGroup ? h('div', { class: 'note-box warn' }, `有 ${noGroup} 人沒有填組別，會列為「未分組」。`) : null,
+      h('div', { class: 'table-wrap' }, h('table', { class: 'detail-table' },
+        h('thead', {}, h('tr', {}, ['學號', '姓名', '組別', '班級', '學校信箱'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, rows.slice(0, 8).map((r) => h('tr', {}, r.map((x) => h('td', {}, x || '—'))))))),
+      rows.length > 8 ? h('p', { class: 'field-hint' }, `只顯示前 8 人，其餘 ${rows.length - 8} 人會一起匯入。`) : null].filter(Boolean));
+  };
+  ta.addEventListener('input', update);
+  show(
+    head('匯入學生名單', '名單決定每位學生屬於實驗組或對照組。學生登入學校帳號後，系統會依學校信箱或學號自動對應。', classStats),
+    h('ol', { class: 'guide-steps' },
+      h('li', {}, '在 Excel 或 Google 試算表準備五欄：學號、姓名、組別、班級、學校信箱（信箱可以空白）。組別請寫「實驗組」或「對照組」。'),
+      h('li', {}, '選取整個表格（可以含標題列）複製，貼到下面的框裡；或選擇另存的 CSV 檔。'),
+      h('li', {}, '確認預覽後按「匯入名單」。新名單會取代原本的名單，學生的練習紀錄不受影響。')),
+    ta,
+    h('div', { class: 'section-actions', style: { marginTop: '10px' } },
+      btn('選擇 CSV 檔', async () => { const f = await pickFile('.csv,text/csv,text/plain'); if (f) { ta.value = await f.text(); update(); } }, 'secondary small'),
+      btn('下載名單範本', () => csvDownload('學生名單範本.csv', [['學號', '姓名', '組別', '班級', '學校信箱（選填）'], ['1130101', '陳一', '實驗組', '體育一甲', ''], ['1130201', '黃四', '對照組', '體育一乙', '']]), 'quiet small')),
+    preview,
+    h('div', { class: 'btn-row one' }, btn('匯入名單', async () => {
+      if (!rows.length) return toast('請先貼上名單');
+      if (!confirm(`要用這份 ${rows.length} 人的名單取代目前的名單嗎？`)) return;
+      msg.replaceChildren(h('p', { class: 'progress-text' }, '匯入中…'));
+      try {
+        const r = await TR.importRoster(rows);
+        toast(`已匯入 ${r.count} 人`); classStats();
+      } catch (e) { msg.replaceChildren(h('div', { class: 'note-box warn' }, e.code === 'bad-key' ? '查詢金鑰不正確，請到「練習紀錄後台設定」重新輸入。' : '匯入失敗，請確認網路連線與後台設定。')); }
+    })),
+    msg,
+    h('div', { class: 'note-box' }, '對應方式：先比對名單上的學校信箱，再比對學號（不分大小寫；學號與信箱帳號只要數字部分相同也算對應，例如 s1130101 對應 1130101）。對應不到的帳號會列在「未分組」，可以補進名單後重新匯入。'),
   );
 }
 
@@ -1426,7 +1818,12 @@ function openSettings() {
           btn('切換為學生身分', () => { setTeacher(false); close(); toast('已切換為學生身分'); route(); }, 'secondary'),
           btn('變更老師密碼', () => { close(); changePassword(); }, 'quiet')))
       : h('div', {}, h('p', { style: { margin: '0 0 8px' } }, '目前是學生身分。'),
-        btn('老師登入', () => { close(); teacherLogin(); }, 'secondary'))),
+        h('div', { class: 'section-actions', style: { margin: 0 } },
+          TR.enabled() ? btn(TR.account() ? '我的帳號與練習時間' : '綁定學校 Google 帳號', () => { close(); accountScreen({}); }, 'secondary') : null,
+          btn('老師登入', () => { close(); teacherLogin(); }, 'quiet')))),
+    isTeacher() ? groupField('練習紀錄後台', h('div', {},
+      h('p', { style: { margin: '0 0 8px' } }, TR.enabled() ? '已設定，學生的練習次數與時間會送到 Google 試算表。' : '尚未設定。設定後可以看到每位學生的練習次數與練習時間。'),
+      h('div', { class: 'section-actions', style: { margin: 0 } }, btn('練習紀錄後台設定', () => { close(); trackingSettings(); }, 'secondary')))) : null,
     installEvent ? h('div', { class: 'btn-row one' }, btn('安裝到這台裝置', async () => { installEvent.prompt(); await installEvent.userChoice; installEvent = null; close(); })) : null,
     h('p', { class: 'field-hint' }, `目前版本：${APP_VERSION}`),
     h('div', { class: 'note-box' }, '學生的影片和動作分析都在這台裝置上完成，不會上傳。老師發布的示範影片會存放在網站的 GitHub 專案中，任何知道網址的人都能看到。第一次使用需要網路下載辨識模型。'),
@@ -1451,5 +1848,6 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     if (hadController && !reloaded) { reloaded = true; location.reload(); }
   });
 }
+TR.init({ ns: 'swing-coach', appVersion: APP_VERSION, studentCheck: () => getRole() === 'student' });
 updateRoleBadge();
 route();

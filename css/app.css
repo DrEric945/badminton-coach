@@ -401,3 +401,55 @@ dialog.sheet::backdrop { background: rgba(20, 56, 86, 0.5); }
 .practice li { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-s); padding: 10px 14px; }
 .practice li p { margin: 4px 0 0; font-size: 14.5px; }
 .practice .detail { color: var(--muted); font-size: 13.5px; }
+
+/* ───────── v10：練習紀錄（Google 試算表後台） ───────── */
+.trk-totals, .trk-account { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 14px 16px; margin-bottom: 16px; display: grid; gap: 6px; }
+.trk-totals > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.trk-totals b { font-family: var(--font-num); font-size: 30px; color: var(--court); }
+.trk-totals .field-hint { margin: 0; }
+.trk-totals .btn { justify-self: start; }
+.trk-k { font-size: 13px; color: var(--muted); }
+.trk-account b { font-size: 20px; }
+.trk-gbtn { min-height: 48px; margin: 4px 0 8px; }
+.trk-code-row { display: flex; gap: 10px; align-items: center; }
+.trk-code-row input { flex: 1; max-width: 12em; min-height: 46px; padding: 0 12px; border: 2px solid var(--rule); border-radius: var(--radius-s); background: var(--surface); font-family: var(--font-num); font-size: 22px; letter-spacing: 0.2em; }
+.trk-code { font-family: var(--font-num); font-size: 44px; font-weight: 700; letter-spacing: 0.25em; color: var(--court); margin: 12px 0 0; }
+.trk-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 14px; }
+.trk-filters select { min-height: 42px; border: 2px solid var(--rule); border-radius: var(--radius-s); padding: 0 8px; background: var(--surface); }
+.trk-check { display: inline-flex; align-items: center; gap: 6px; font-size: 14.5px; min-height: 42px; }
+.trk-check input { width: 18px; height: 18px; accent-color: var(--court); }
+.trk-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 14px; }
+.trk-kpis > div { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 10px 12px; display: grid; gap: 2px; }
+.trk-kpis b { font-family: var(--font-num); font-size: 26px; color: var(--court); line-height: 1.1; }
+.trk-kpis > div.warn b { color: #B3261E; }
+.trk-table td { vertical-align: top; }
+.trk-table td b { font-weight: 700; }
+.trk-table .detail { color: var(--muted); font-size: 12.5px; font-family: var(--font-text); }
+.trk-table tr.idle td:first-child { box-shadow: inset 4px 0 0 #E8A09A; padding-left: 10px; }
+@media (max-width: 600px) {
+  .trk-table thead { display: none; }
+  .trk-table, .trk-table tbody { display: block; }
+  .trk-table tr { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 10px; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .trk-table td { border: 0; padding: 0; white-space: normal; text-align: left !important; font-size: 16px; }
+  .trk-table td.trk-who { grid-column: 1 / -1; }
+  .trk-table td[data-label]::before { content: attr(data-label); display: block; font-size: 12px; color: var(--muted); font-family: var(--font-text); }
+  .trk-table tr.idle td:first-child { box-shadow: none; padding-left: 0; }
+  .trk-table tr.idle { box-shadow: inset 4px 0 0 #E8A09A; padding-left: 12px; }
+}
+
+/* ───────── v11：實驗組／對照組 ───────── */
+.trk-period { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 12px 14px; margin-bottom: 8px; display: grid; gap: 6px; }
+.trk-period .field-hint { margin: 0; }
+.trk-period-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.trk-period-row input[type="date"] { min-height: 42px; border: 2px solid var(--rule); border-radius: var(--radius-s); padding: 0 8px; background: var(--surface); }
+.trk-groups td:first-child { white-space: normal; min-width: 8.5em; }
+.trk-groups th.num, .trk-groups td.num { font-size: 16px; }
+.trk-groups th { color: var(--ink); font-weight: 700; font-size: 14px; }
+.trk-groups .all { background: #EEF3F7; }
+.chip.grp.exp { background: #FFE2CC; color: #7A3300; }
+.chip.grp.ctl { background: #D6E3EF; color: var(--court-deep); }
+.chip.grp.none { background: #E4E7E5; color: var(--muted); }
+.trk-who .chip { margin-right: 4px; font-size: 12px; }
+.trk-paste { width: 100%; min-height: 180px; padding: 10px 12px; border: 2px solid var(--rule); border-radius: var(--radius-s); background: var(--surface); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; line-height: 1.5; }
+.trk-paste:focus { border-color: var(--court); outline: none; }
+.guide-steps { padding-left: 1.3em; margin: 0 0 14px; display: grid; gap: 6px; }
