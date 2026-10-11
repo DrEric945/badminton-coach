@@ -457,3 +457,6 @@ dialog.sheet::backdrop { background: rgba(20, 56, 86, 0.5); }
 /* v14 綁定表單 */
 .trk-steps { margin: 6px 0 14px; padding-left: 1.4em; line-height: 1.7; }
 .trk-wait { color: var(--accent, #0B6E4F); font-weight: 600; }
+.trk-pair { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 14px 0 6px; padding: 12px 14px; border: 2px dashed var(--rule); border-radius: var(--radius-s); background: var(--surface); }
+.trk-pair .trk-k { display: block; }
+.trk-pair-code { font-family: var(--font-num); font-size: 28px; letter-spacing: 0.18em; color: var(--court); user-select: all; -webkit-user-select: all; }

@@ -15,7 +15,7 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
-const APP_VERSION = 'v15（2026-10-12）';
+const APP_VERSION = 'v16（2026-10-12）';
 function getRole() { try { return localStorage.getItem('swing-coach-role'); } catch { return null; } }
 function isTeacher() { return getRole() === 'teacher'; }
 function setRole(role) {
@@ -1589,8 +1589,12 @@ function accountScreen({ first = false } = {}) {
       h('ol', { class: 'trk-steps' },
         h('li', {}, '按「開啟綁定表單」。'),
         h('li', {}, '確認表單上方顯示的是你的學校帳號（＠' + ((cfg.domain || '').split(',')[0].trim() || '學校網域') + '），不是的話按「切換帳號」。'),
-        h('li', {}, '直接按「提交」（配對碼已經自動填好）。'),
+        h('li', {}, '「配對碼」通常已經自動填好；如果是空白，請按下面的「複製配對碼」，回到表單長按貼上（或照著輸入）。'),
+        h('li', {}, '按「提交」。'),
         h('li', {}, '回到這個 App，幾秒內就會自動完成綁定。')),
+      h('div', { class: 'trk-pair' },
+        h('div', {}, h('span', { class: 'trk-k' }, '你的配對碼'), h('b', { class: 'trk-pair-code' }, TR.pairCode())),
+        btn('複製配對碼', () => { TR.markFormOpened(); copyText(TR.pairCode(), '已複製配對碼，回到表單貼上'); }, 'secondary small')),
       h('div', { class: 'section-actions', style: { margin: '0' } },
         open,
         btn('我已送出', async () => {

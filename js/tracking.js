@@ -143,7 +143,7 @@ export async function formInfo() {
 }
 const PAIR_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 function newPairCode() {
-  const a = new Uint8Array(10);
+  const a = new Uint8Array(8); // 8 碼：表單沒自動帶入時，學生也能手動貼上或輸入
   crypto.getRandomValues(a);
   return Array.from(a, (x) => PAIR_CHARS[x % PAIR_CHARS.length]).join('');
 }
@@ -155,6 +155,7 @@ export async function startFormPairing() {
   if (!p || Date.now() - p.at > 25 * 60 * 1000) { p = { code: newPairCode(), at: Date.now() }; set('pair', p); }
   return url.replace('PAIRCODE', p.code);
 }
+export const pairCode = () => { const p = get('pair'); return p ? p.code : ''; };
 export const pairPending = () => { const p = get('pair'); return !!(p && p.opened && Date.now() - p.at < 30 * 60 * 1000); };
 export function markFormOpened() { const p = get('pair'); if (p) set('pair', { ...p, opened: true }); }
 // 詢問後台：表單送出了嗎？送出了就完成綁定，回傳帳號；還沒就回傳 null
