@@ -15,7 +15,7 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
-const APP_VERSION = 'v13（2026-10-11）';
+const APP_VERSION = 'v15（2026-10-12）';
 function getRole() { try { return localStorage.getItem('swing-coach-role'); } catch { return null; } }
 function isTeacher() { return getRole() === 'teacher'; }
 function setRole(role) {
@@ -1465,6 +1465,19 @@ function studentTotals() {
     a ? null : btn('綁定學校帳號', () => accountScreen({}), 'secondary small'));
 }
 
+// 綁定表單送出後，背景完成綁定時呼叫
+let pairErrorBox = null;
+function onPairLinked() {
+  toast('已綁定學校帳號');
+  if (document.querySelector('.trk-steps')) accountScreen({});
+  else if (location.hash.slice(1) === 'history') route();
+}
+function onPairError(e) {
+  // 配對碼已失效，重新顯示綁定畫面（會產生新的配對碼），再顯示錯誤原因
+  if (pairErrorBox && pairErrorBox.isConnected) { document.querySelectorAll('dialog[open]').forEach((d) => d.close()); accountScreen({}); pairErrorBox.replaceChildren(h('div', { class: 'note-box warn' }, TR.errorText(e), ' 請按「開啟綁定表單」重新送出。')); }
+  else toast(TR.errorText(e));
+}
+
 function accountScreen({ first = false } = {}) {
   const back = () => { setTab('swing'); route(); };
   const a = TR.account();
@@ -1521,10 +1534,24 @@ function accountScreen({ first = false } = {}) {
   };
   const cfg = TR.config() || {};
   const bindHref = cfg.bindUrl ? cfg.bindUrl + (cfg.bindUrl.includes('?') ? '&' : '?') + 'action=bind' : '';
+  // 綁定表單：後台有建立時優先使用（學生和老師的學校帳號屬於不同機構也能用）
+  const formBox = h('div', {}, h('p', { class: 'field-hint' }, '正在確認綁定方式…'));
+  const bindBox = h('div');
+  const formStatus = h('div', { role: 'status' });
   show(
     head('綁定學校 Google 帳號', '證明一次你的學校帳號，老師就能看到你的練習次數和練習時間。', first ? null : back),
     privacy,
-    bindHref ? [
+    formBox,
+    bindBox,
+    msg,
+    first ? h('div', { class: 'section-actions', style: { marginTop: '22px' } }, btn('稍後再說', () => {
+      toast('之後可以在「設定」綁定，練習紀錄會先存在這台裝置'); route();
+    }, 'quiet')) : null,
+  );
+  // 送出表單後回到 App：背景會自動詢問後台（TR.init 的 onLinked / onPairError）
+  pairErrorBox = formStatus;
+  const otherWays = (withForm) => [
+    !withForm && bindHref ? [
       h('h2', {}, '第 1 步：取得綁定碼'),
       h('p', { class: 'field-hint' }, '按下面的按鈕會開啟學校帳號的綁定頁。請用學校的 Google 帳號登入，頁面會顯示 6 位數綁定碼。'),
       h('div', { class: 'section-actions', style: { margin: '0' } },
@@ -1533,25 +1560,53 @@ function accountScreen({ first = false } = {}) {
       h('p', { class: 'field-hint' }, '瀏覽器同時登入多個 Google 帳號而打不開，或顯示的不是你的學校帳號時：按「複製綁定頁網址」，開一個無痕視窗（iPhone Safari 的「私密瀏覽」、Chrome 的「無痕分頁」），把網址貼上，只登入學校帳號。'),
       h('h2', {}, '第 2 步：輸入綁定碼'),
     ] : [
-      cfg.clientId ? null : h('div', { class: 'note-box warn' }, '老師還沒有設定學生綁定頁，請先輸入老師或其他裝置給的綁定碼。'),
-      h('h2', {}, '輸入綁定碼'),
+      withForm || cfg.clientId ? null : h('div', { class: 'note-box warn' }, '老師還沒有設定學生綁定頁，請先輸入老師或其他裝置給的綁定碼。'),
+      h('h2', {}, withForm ? '在另一台裝置綁定過了？' : '輸入綁定碼'),
     ],
-    h('p', { class: 'field-hint' }, bindHref ? '回到這裡，輸入綁定頁上的 6 位數字。已經在其他裝置綁定過的話，也可以用那台裝置「我的帳號」產生的綁定碼。' : '已經在其他裝置綁定過：到那台裝置的「我的帳號」產生綁定碼，在這裡輸入。'),
+    h('p', { class: 'field-hint' }, !withForm && bindHref ? '回到這裡，輸入綁定頁上的 6 位數字。已經在其他裝置綁定過的話，也可以用那台裝置「我的帳號」產生的綁定碼。' : '已經在其他裝置綁定過：到那台裝置的「我的帳號」產生綁定碼，在這裡輸入。'),
     h('div', { class: 'trk-code-row' }, codeIn, btn('綁定', async () => {
       if (!/^\d{6}$/.test(codeIn.value.trim())) return toast('請輸入 6 位數的綁定碼');
       try { await TR.redeemCode(codeIn.value.trim()); done(); } catch (e) { err(e); }
     }, 'secondary')),
-    msg,
     cfg.clientId ? [
-      h('h2', {}, bindHref ? '或用 Google 帳號登入' : '用 Google 帳號登入'),
+      h('h2', {}, withForm || bindHref ? '或用 Google 帳號登入' : '用 Google 帳號登入'),
       h('p', { class: 'field-hint' }, '請選擇學校的帳號，其他 Google 帳號無法綁定。iPhone 主畫面上的 App 按登入沒有反應時，請改用綁定碼。'),
       gbtn,
     ] : null,
-    first ? h('div', { class: 'section-actions', style: { marginTop: '22px' } }, btn('稍後再說', () => {
-      toast('之後可以在「設定」綁定，練習紀錄會先存在這台裝置'); route();
-    }, 'quiet')) : null,
-  );
-  if (cfg.clientId) TR.renderSignIn(gbtn, { onDone: done, onError: (e) => { if (e.code === 'not-configured' || e.code === 'network') gbtn.replaceChildren(h('p', { class: 'field-hint' }, e.code === 'network' ? '無法載入 Google 登入，請確認網路連線。' : TR.errorText(e))); else err(e); } });
+  ];
+  TR.formInfo().then(async (formUrl) => {
+    if (!formBox.isConnected) return;
+    if (!formUrl) { formBox.replaceChildren(); bindBox.replaceChildren(...otherWays(false).flat(2).filter(Boolean)); if (cfg.clientId) mountGsi(); return; }
+    let href;
+    try { href = await TR.startFormPairing(); } catch (e) { formBox.replaceChildren(); bindBox.replaceChildren(...otherWays(false).flat(2).filter(Boolean)); if (cfg.clientId) mountGsi(); return; }
+    const open = h('a', { class: 'btn', href, target: '_blank', rel: 'noopener' }, '開啟綁定表單');
+    open.addEventListener('click', () => {
+      TR.markFormOpened();
+      formStatus.replaceChildren(h('p', { class: 'field-hint trk-wait' }, '等待表單送出… 送出後回到這個畫面，會自動完成綁定。'));
+    });
+    formBox.replaceChildren(
+      h('h2', {}, '用學校帳號送出綁定表單'),
+      h('ol', { class: 'trk-steps' },
+        h('li', {}, '按「開啟綁定表單」。'),
+        h('li', {}, '確認表單上方顯示的是你的學校帳號（＠' + ((cfg.domain || '').split(',')[0].trim() || '學校網域') + '），不是的話按「切換帳號」。'),
+        h('li', {}, '直接按「提交」（配對碼已經自動填好）。'),
+        h('li', {}, '回到這個 App，幾秒內就會自動完成綁定。')),
+      h('div', { class: 'section-actions', style: { margin: '0' } },
+        open,
+        btn('我已送出', async () => {
+          TR.markFormOpened();
+          try { if (await TR.checkFormPairing()) { onPairLinked(); return; } toast('還沒收到表單，請確認已按「提交」，幾秒後再試'); }
+          catch (e) { formStatus.replaceChildren(h('div', { class: 'note-box warn' }, TR.errorText(e))); }
+        }, 'secondary'),
+        btn('複製表單網址', () => { TR.markFormOpened(); copyText(href, '已複製，請貼到瀏覽器的網址列'); }, 'quiet')),
+      formStatus,
+      h('p', { class: 'field-hint' }, '表單打不開或要求登入的不是學校帳號：按「複製表單網址」，貼到無痕視窗（iPhone Safari 的「私密瀏覽」），只登入學校帳號送出，再回到這個 App 按「我已送出」。'));
+    if (TR.pairPending()) formStatus.replaceChildren(h('p', { class: 'field-hint trk-wait' }, '等待表單送出… 送出後回到這個畫面，會自動完成綁定。'));
+    bindBox.replaceChildren(...otherWays(true).flat(2).filter(Boolean));
+    if (cfg.clientId) mountGsi();
+    TR.checkPairNow();
+  });
+  const mountGsi = () => TR.renderSignIn(gbtn, { onDone: done, onError: (e) => { if (e.code === 'not-configured' || e.code === 'network') gbtn.replaceChildren(h('p', { class: 'field-hint' }, e.code === 'network' ? '無法載入 Google 登入，請確認網路連線。' : TR.errorText(e))); else err(e); } });
 }
 
 // ───────── 練習紀錄：老師 ─────────
@@ -1582,7 +1637,9 @@ function trackingSettings() {
     const ok = await check();
     if (ok === undefined) return;
     const b = bind.value.trim();
-    if (!b && !cid.value.trim()) return say('「學生綁定頁網址」和「OAuth 用戶端 ID」至少要填一個，學生才能綁定學校帳號。', false);
+    let hasForm = false;
+    try { hasForm = !!(await TR.pingEndpoint(ep.value.trim())).pairForm; } catch { hasForm = false; }
+    if (!b && !cid.value.trim() && !hasForm) return say('後台還沒有建立綁定表單（在 Apps Script 執行 setupForm），也沒有填「學生綁定頁網址」，學生無法綁定學校帳號。', false);
     if (b && !/^https:\/\/script\.google\.com\/(a\/macros\/[^/]+|macros)\/s\/.+\/exec$/.test(b)) return say('學生綁定頁網址格式不對，應該是 https://script.google.com/…/exec。', false);
     if (b && b === ep.value.trim()) return say('學生綁定頁要用「第二個部署作業」（存取權選學校機構內所有人）的網址，不能和網頁應用程式網址相同。', false);
     if (cid.value.trim() && !/\.apps\.googleusercontent\.com$/.test(cid.value.trim())) return say('OAuth 用戶端 ID 格式不對；不使用 Google 登入按鈕時請保持空白。', false);
@@ -1596,7 +1653,7 @@ function trackingSettings() {
   show(
     head('練習紀錄後台設定', '把 Google 試算表後台的資料填進來，學生的練習次數與時間就會自動送到試算表。設定方式請看 README 的「練習紀錄後台設定」。', () => { setTab('history'); historyHome(); }),
     field('網頁應用程式網址', ep, '第一個部署作業（存取權：所有人）的網址'),
-    field('學生綁定頁網址', bind, '第二個部署作業（存取權：學校機構內所有人）的網址。學生用它取得綁定碼，不需要 Google Cloud'),
+    field('學生綁定頁網址（選填）', bind, '已執行 setupForm 建立綁定表單時請保持空白。只有老師和學生屬於同一個機構時才需要：填第二個部署作業（存取權：學校機構內所有人）的網址'),
     field('OAuth 用戶端 ID（選填）', cid, '學校可以使用 Google Cloud 時才填，要和程式碼裡的 CLIENT_ID 相同；不填則只用綁定頁'),
     field('學校信箱網域', dom, '要和程式碼裡的 SCHOOL_DOMAIN 相同'),
     field('查詢金鑰', key, '和程式碼裡的 TEACHER_KEY 相同。只存在這台裝置，不會發布給學生'),
@@ -1848,6 +1905,7 @@ if ('serviceWorker' in navigator && location.protocol !== 'file:') {
     if (hadController && !reloaded) { reloaded = true; location.reload(); }
   });
 }
-TR.init({ ns: 'swing-coach', appVersion: APP_VERSION, studentCheck: () => getRole() === 'student' });
+TR.init({ ns: 'swing-coach', appVersion: APP_VERSION, studentCheck: () => getRole() === 'student', onLinked: onPairLinked, onPairError });
 updateRoleBadge();
-route();
+// 學生開了綁定表單後 App 被重新開啟：直接回到綁定畫面等候
+if (getRole() === 'student' && !TR.account() && TR.pairPending()) accountScreen({}); else route();

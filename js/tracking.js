@@ -84,6 +84,7 @@ export function errorText(e) {
   if (c === 'too-many') return '嘗試次數太多，請等 1 分鐘再試。';
   if (c === 'not-configured') return '老師還沒完成練習紀錄後台的設定。';
   if (c === 'bad-key') return '這台裝置的綁定已失效，請重新登入。';
+  if (c === 'form-not-verified') return '綁定表單沒有收集「經過驗證」的信箱，請老師檢查表單設定。';
   return '連不上練習紀錄後台，請確認網路後再試。';
 }
 
@@ -126,6 +127,60 @@ export async function renderSignIn(container, { onDone, onError } = {}) {
   container.replaceChildren();
   window.google.accounts.id.renderButton(container, { theme: 'outline', size: 'large', text: 'signin_with', shape: 'rectangular', locale: 'zh-TW', width: Math.min(320, container.clientWidth || 300) });
 }
+
+// ───────── 綁定表單（學生用學校帳號送出 Google 表單） ─────────
+let pairInfo = null;
+export async function formInfo() {
+  const c = config();
+  if (!c || !c.endpoint) return null;
+  if (pairInfo && pairInfo.endpoint === c.endpoint) return pairInfo.url;
+  try {
+    const res = await fetch(`${c.endpoint}?action=pairinfo&t=${Date.now()}`, { redirect: 'follow' });
+    const j = await res.json();
+    pairInfo = { endpoint: c.endpoint, url: (j && j.ok && j.formUrl) || null };
+  } catch { return null; }
+  return pairInfo.url;
+}
+const PAIR_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function newPairCode() {
+  const a = new Uint8Array(10);
+  crypto.getRandomValues(a);
+  return Array.from(a, (x) => PAIR_CHARS[x % PAIR_CHARS.length]).join('');
+}
+// 產生（或沿用 30 分鐘內的）配對碼，回傳已填好配對碼的表單網址
+export async function startFormPairing() {
+  const url = await formInfo();
+  if (!url) throw Object.assign(new Error(), { code: 'not-configured' });
+  let p = get('pair');
+  if (!p || Date.now() - p.at > 25 * 60 * 1000) { p = { code: newPairCode(), at: Date.now() }; set('pair', p); }
+  return url.replace('PAIRCODE', p.code);
+}
+export const pairPending = () => { const p = get('pair'); return !!(p && p.opened && Date.now() - p.at < 30 * 60 * 1000); };
+export function markFormOpened() { const p = get('pair'); if (p) set('pair', { ...p, opened: true }); }
+// 詢問後台：表單送出了嗎？送出了就完成綁定，回傳帳號；還沒就回傳 null
+export async function checkFormPairing() {
+  const p = get('pair');
+  if (!p) return null;
+  let r;
+  try { r = await post({ action: 'pairCheck', code: p.code, device: device() }); }
+  catch (e) { if (e.code && e.code !== 'http' && e.code !== 'network') set('pair', null); throw e; }
+  if (r.status !== 'linked') return null;
+  set('pair', null);
+  setAccount(r, r.profile);
+  flush();
+  return account();
+}
+export function cancelFormPairing() { set('pair', null); }
+// 背景詢問：學生送出表單後回到 App（即使 App 被重新開啟）也能自動完成綁定
+let pairHooks = {}, pairBusy = false;
+async function pairTick() {
+  if (pairBusy || account() || !pairPending() || document.visibilityState !== 'visible' || !navigator.onLine) return;
+  pairBusy = true;
+  try { const a = await checkFormPairing(); if (a && pairHooks.onLinked) pairHooks.onLinked(a); }
+  catch (e) { if (pairHooks.onError) pairHooks.onError(e); }
+  finally { pairBusy = false; }
+}
+export const checkPairNow = pairTick;
 
 export async function redeemCode(code) {
   const r = await post({ action: 'redeem', code, device: device() });
@@ -203,8 +258,11 @@ export function logAnalysis({ type, template, score, shots, videoSec, topIssue }
   flush();
 }
 
-export function init({ ns, appVersion, studentCheck }) {
+export function init({ ns, appVersion, studentCheck, onLinked, onPairError }) {
   NS = ns; APP = appVersion; if (studentCheck) isStudent = studentCheck;
+  pairHooks = { onLinked, onError: onPairError };
+  setInterval(pairTick, 3000);
+  document.addEventListener('visibilitychange', pairTick);
   ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach((ev) => window.addEventListener(ev, ping, { passive: true, capture: true }));
   clearInterval(timer);
   timer = setInterval(() => {

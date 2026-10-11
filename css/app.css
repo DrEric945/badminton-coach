@@ -453,3 +453,7 @@ dialog.sheet::backdrop { background: rgba(20, 56, 86, 0.5); }
 .trk-paste { width: 100%; min-height: 180px; padding: 10px 12px; border: 2px solid var(--rule); border-radius: var(--radius-s); background: var(--surface); font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 14px; line-height: 1.5; }
 .trk-paste:focus { border-color: var(--court); outline: none; }
 .guide-steps { padding-left: 1.3em; margin: 0 0 14px; display: grid; gap: 6px; }
+
+/* v14 綁定表單 */
+.trk-steps { margin: 6px 0 14px; padding-left: 1.4em; line-height: 1.7; }
+.trk-wait { color: var(--accent, #0B6E4F); font-weight: 600; }
