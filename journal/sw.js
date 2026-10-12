@@ -1,5 +1,5 @@
 // 我的羽球練習日誌：離線快取（和「我的羽球教練」的快取分開，互不清除）
-const VERSION = 'swing-journal-v4';
+const VERSION = 'swing-journal-v5';
 const RUNTIME = 'swing-journal-runtime-v1';
 const SHELL = [
   './', 'index.html', 'css/journal.css', 'manifest.webmanifest', 'js/journal.js', 'js/jstore.js',

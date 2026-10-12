@@ -5,7 +5,7 @@ import * as L from '../../js/library.js';
 import * as DB from './jstore.js';
 import { $, h, toast, field, groupField, segmented } from '../../js/ui.js';
 
-const APP_VERSION = 'j4（2026-10-12）';
+const APP_VERSION = 'j5（2026-10-12）';
 const NS = 'swing-journal';
 const lsGet = (k, d = null) => { try { const v = localStorage.getItem(`${NS}-${k}`); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(`${NS}-${k}`); else localStorage.setItem(`${NS}-${k}`, JSON.stringify(v)); } catch { /* 無痕模式 */ } };
@@ -64,7 +64,7 @@ function welcome() {
     head('歡迎使用我的羽球練習日誌', '課餘時間看老師的示範影片自主練習，練習完記一筆日誌。'),
     h('ol', { class: 'jr-steps' },
       h('li', {}, h('b', {}, '看示範'), h('span', {}, '在「示範影片」看老師的標準動作，可以慢速播放。')),
-      h('li', {}, h('b', {}, '自主練習'), h('span', {}, '選一個動作，反覆練習揮拍。')),
+      h('li', {}, h('b', {}, '自主練習'), h('span', {}, '照著示範的動作，反覆練習揮拍。')),
       h('li', {}, h('b', {}, '寫日誌'), h('span', {}, '填上練習時間和揮拍次數送出給老師。可以加一張練習照片，照片只存在你的手機，不會上傳。'))),
     h('div', { class: 'btn-row one' }, btn('開始使用', async () => {
       lsSet('started', true);
@@ -163,12 +163,16 @@ async function demoScreen(entry) {
   );
   // show() 會先執行上一個畫面的清理，所以釋放影片網址要在 show() 之後登記
   if (url) onLeave(() => URL.revokeObjectURL(url));
+  // 記下學生點開哪一支示範影片（寫日誌時自動帶入，並計算點開次數）
+  lsSet('views', [...lsGet('views', []).slice(-300), { id: entry.id, name: tpl.name, at: Date.now() }]);
+  lsSet('lastDemo', tpl.name);
 }
 
 // ───────── 寫日誌 ─────────
 const todayStr = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
-const draft = { date: '', template: '', other: '', minutes: '', reps: '', note: '', photo: null, thumb: '' };
-const OTHER = '__other__';
+const draft = { date: '', template: '', minutes: '', reps: '', note: '', photo: null, thumb: '' };
+const NONE = '__none__';
+const NO_VIDEO = '（這次沒有看示範影片）';
 
 // 照片只存在這台手機：縮小成長邊 1600 像素的 JPEG 以節省空間，另做一張小縮圖給清單用
 async function loadImage(file) {
@@ -208,25 +212,23 @@ async function logForm() {
   if (!draft.date) draft.date = todayStr();
   const minDay = (() => { const d = new Date(); d.setDate(d.getDate() - 30); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; })();
   const date = h('input', { type: 'date', value: draft.date, max: todayStr(), min: minDay });
-  const known = draft.template && names.includes(draft.template);
+  // 預設帶入最近在「示範影片」點開的那一支
+  if (!draft.template) { const last = lsGet('lastDemo'); if (last && names.includes(last)) draft.template = last; }
   const sel = h('select', {},
-    h('option', { value: '' }, '請選擇練習的動作'),
+    h('option', { value: '' }, '請選擇這次看的示範影片'),
     names.map((n) => h('option', { value: n }, n)),
-    h('option', { value: OTHER }, '其他（自己填寫）'));
-  sel.value = draft.template ? (known ? draft.template : OTHER) : '';
-  const other = h('input', { type: 'text', value: known ? '' : (draft.template || draft.other), placeholder: '例：反手挑球', maxlength: 40 });
-  const otherBox = field('動作名稱', other);
-  otherBox.hidden = sel.value !== OTHER;
-  sel.addEventListener('change', () => { otherBox.hidden = sel.value !== OTHER; save(); });
+    h('option', { value: NONE }, NO_VIDEO));
+  sel.value = draft.template === NONE ? NONE : (draft.template && names.includes(draft.template) ? draft.template : '');
+  sel.addEventListener('change', () => save());
   const minutes = h('input', { type: 'number', inputmode: 'numeric', min: 1, max: 300, step: 1, value: draft.minutes, placeholder: '例：30' });
   const reps = h('input', { type: 'number', inputmode: 'numeric', min: 1, max: 5000, step: 1, value: draft.reps, placeholder: '例：100' });
   const note = h('textarea', { rows: 3, maxlength: 500, placeholder: '例：在宿舍前空地練習，後半段比較能做到轉體。' });
   note.value = draft.note;
   const save = () => {
     draft.date = date.value; draft.minutes = minutes.value; draft.reps = reps.value; draft.note = note.value;
-    draft.template = sel.value === OTHER ? '' : sel.value; draft.other = other.value;
+    draft.template = sel.value;
   };
-  [date, minutes, reps, note, other].forEach((el) => el.addEventListener('input', save));
+  [date, minutes, reps, note].forEach((el) => el.addEventListener('input', save));
 
   // 照片
   const preview = h('div', { class: 'jr-photo' });
@@ -256,21 +258,24 @@ async function logForm() {
 
   const submit = async () => {
     save();
-    const tplName = sel.value === OTHER ? other.value.trim() : sel.value;
+    const tplName = sel.value === NONE ? NO_VIDEO : sel.value;
     const m = Number(minutes.value), r = Number(reps.value);
     if (!date.value) return warn('請選擇練習日期。');
     if (date.value > todayStr()) return warn('練習日期不能是未來的日期。');
-    if (!tplName) return warn('請選擇練習的動作。');
+    if (!tplName) return warn('請選擇這次看的示範影片。');
     if (!Number.isFinite(m) || m < 1 || m > 300) return warn('練習時間請填 1～300 分鐘。');
     if (!Number.isInteger(r) || r < 1 || r > 5000) return warn('揮拍次數請填 1～5000 的整數。');
+    // 從上一筆日誌到現在，這支影片在 App 裡被點開幾次
+    const prevAt = (await DB.all('entries').catch(() => [])).reduce((t, e) => Math.max(t, Date.parse(e.at) || 0), 0);
+    const opens = sel.value === NONE ? 0 : lsGet('views', []).filter((v) => v.name === tplName && v.at > prevAt).length;
     const entry = {
-      id: DB.uid(), at: new Date().toISOString(), date: date.value, template: tplName,
+      id: DB.uid(), at: new Date().toISOString(), date: date.value, template: tplName, opens,
       minutes: Math.round(m), reps: r, note: note.value.trim(), photo: draft.photo, thumb: draft.thumb,
       app: APP_VERSION, synced: false,
     };
     try { await DB.put('entries', entry); }
     catch (e) { console.error(e); return warn('這台裝置無法儲存日誌（可能是無痕模式或空間不足）。'); }
-    Object.assign(draft, { date: '', template: '', other: '', minutes: '', reps: '', note: '', photo: null, thumb: '' });
+    Object.assign(draft, { date: '', template: '', minutes: '', reps: '', note: '', photo: null, thumb: '' });
     doneScreen(entry);
   };
 
@@ -278,8 +283,7 @@ async function logForm() {
     head('寫練習日誌', '每次自主練習完記一筆。練習時間和揮拍次數必填；照片可以加在自己的日誌裡，不會上傳。'),
     accountBanner(),
     field('練習日期', date),
-    field('練習的動作', sel, '單一動作的揮拍練習，請選擇這次主要練習的動作。'),
-    otherBox,
+    field('觀看的示範影片', sel, '已自動帶入你最近在「示範影片」點開的影片；這次看的是別支，請改選。'),
     h('div', { class: 'jr-two' },
       field('練習時間（分鐘）', minutes, '大約就好'),
       field('揮拍次數', reps, '這個動作大約揮了幾下')),
@@ -330,7 +334,7 @@ function syncPending() {
         const r = await TR.request({
           action: 'journal', deviceKey: a.deviceKey, profile: TR.profile(),
           // 照片不上傳，只告訴老師這筆有沒有附照片
-          entry: { id: e.id, at: e.at, date: e.date, template: e.template, minutes: e.minutes, reps: e.reps, note: e.note, app: e.app, hasPhoto: !!e.photo },
+          entry: { id: e.id, at: e.at, date: e.date, template: e.template, opens: e.opens || 0, minutes: e.minutes, reps: e.reps, note: e.note, app: e.app, hasPhoto: !!e.photo },
         });
         if (!r.accepted || !r.accepted.includes(e.id)) throw Object.assign(new Error('not accepted'), { code: 'http' });
         await DB.put('entries', { ...e, synced: true, syncedAt: Date.now() });
@@ -406,6 +410,7 @@ async function entryDetail(e) {
       h('div', { class: 'jr-kpis', style: { marginTop: '14px' } },
         h('div', {}, h('span', { class: 'trk-k' }, '練習時間'), h('b', {}, e.minutes), ' 分鐘'),
         h('div', {}, h('span', { class: 'trk-k' }, '揮拍次數'), h('b', {}, e.reps), ' 下')),
+      h('p', { class: 'field-hint' }, e.template === NO_VIDEO ? '這次沒有看示範影片。' : `觀看的示範影片：${e.template}${e.opens ? `（在 App 裡點開 ${e.opens} 次）` : ''}`),
       e.note ? h('div', { class: 'note-box' }, e.note) : null),
     e.synced ? h('p', { class: 'field-hint', style: { marginTop: '16px' } }, '已送出的日誌無法修改。填錯的話，請告訴老師。')
       : h('div', { class: 'section-actions', style: { marginTop: '18px' } },
