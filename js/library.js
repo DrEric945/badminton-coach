@@ -6,6 +6,9 @@ import { LIBRARY } from './config.js';
 
 const API = 'https://api.github.com';
 const DIR = 'library';
+// 網站根目錄（這個檔案在 js/ 裡）：「練習日誌」App 放在 journal/ 子資料夾，也能讀到同一份示範影片庫
+const SITE = new URL('../', import.meta.url);
+const site = (path) => new URL(path, SITE).href;
 
 export function repoInfo() {
   if (LIBRARY && LIBRARY.owner && LIBRARY.repo) return { owner: LIBRARY.owner, repo: LIBRARY.repo, branch: LIBRARY.branch || 'main' };
@@ -59,7 +62,7 @@ export async function fetchIndex() {
       console.warn('用 API 讀取示範清單失敗，改讀網站檔案', e);
     }
   }
-  const res = await fetch(`${DIR}/index.json?t=${Date.now()}`, { cache: 'no-store' });
+  const res = await fetch(site(`${DIR}/index.json?t=${Date.now()}`), { cache: 'no-store' });
   if (res.status === 404) return emptyIndex();
   if (!res.ok) throw new Error('index ' + res.status);
   return res.json();
@@ -73,7 +76,7 @@ export async function fetchTemplate(entry, onProgress) {
       try { return await api(`/repos/${r.owner}/${r.repo}/contents/${path}?ref=${r.branch}`, { token, raw: true }); }
       catch (e) { console.warn('API 下載失敗，改讀網站檔案', e); }
     }
-    const res = await fetch(path, { cache: 'no-cache' });
+    const res = await fetch(site(path), { cache: 'no-cache' });
     if (!res.ok) throw new Error(`下載 ${path} 失敗（${res.status}）`);
     return res;
   };
@@ -213,7 +216,7 @@ export async function fetchSettings() {
       console.warn('用 API 讀取設定失敗，改讀網站檔案', e);
     }
   }
-  const res = await fetch(`${DIR}/settings.json?t=${Date.now()}`, { cache: 'no-store' });
+  const res = await fetch(site(`${DIR}/settings.json?t=${Date.now()}`), { cache: 'no-store' });
   if (res.status === 404) return {};
   if (!res.ok) throw new Error('settings ' + res.status);
   return res.json();

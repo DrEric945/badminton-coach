@@ -1,5 +1,5 @@
 // 離線快取：程式本體預先快取；辨識模型、WASM 與字型第一次使用時快取
-const VERSION = 'swing-coach-v16';
+const VERSION = 'swing-coach-v17';
 const RUNTIME = 'swing-coach-runtime-v1';
 const SHELL = [
   './', 'index.html', 'css/app.css', 'manifest.webmanifest',
@@ -14,7 +14,8 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys()
-    .then((keys) => Promise.all(keys.filter((k) => k !== VERSION && k !== RUNTIME).map((k) => caches.delete(k))))
+    // 只清掉自己的舊快取（同一個網站還有「練習日誌」App 的快取）
+    .then((keys) => Promise.all(keys.filter((k) => k.startsWith('swing-coach-') && k !== VERSION && k !== RUNTIME).map((k) => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
@@ -35,6 +36,8 @@ self.addEventListener('fetch', (e) => {
   }
   // 共享示範影片庫一律直接連網路（離線時 App 會改用 IndexedDB 裡下載過的示範）
   if (url.origin === self.location.origin && url.pathname.includes('/library/')) return;
+  // 練習日誌 App 由它自己的 service worker 處理
+  if (url.origin === self.location.origin && url.pathname.includes('/journal/')) return;
   if (url.origin === self.location.origin) {
     // 程式本體：先用網路取得最新版，離線時用快取
     e.respondWith(fetch(req.url, { cache: 'no-cache' }).then((res) => {

@@ -76,6 +76,9 @@ async function post(body) {
   return json;
 }
 
+// 給其他 App（練習日誌）送出自訂資料
+export const request = (body) => post(body);
+
 export function errorText(e) {
   const c = e && e.code;
   if (c === 'wrong-domain') return `「${e.email || '這個帳號'}」不是學校的帳號，請改用學校的 Google 帳號登入。`;
@@ -84,6 +87,7 @@ export function errorText(e) {
   if (c === 'too-many') return '嘗試次數太多，請等 1 分鐘再試。';
   if (c === 'not-configured') return '老師還沒完成練習紀錄後台的設定。';
   if (c === 'bad-key') return '這台裝置的綁定已失效，請重新登入。';
+  if (c === 'photo-too-large') return '照片太大，請換一張或重新拍攝。';
   if (c === 'form-not-verified') return '綁定表單沒有收集「經過驗證」的信箱，請老師檢查表單設定。';
   return '連不上練習紀錄後台，請確認網路後再試。';
 }

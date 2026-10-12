@@ -15,7 +15,7 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
-const APP_VERSION = 'v16（2026-10-12）';
+const APP_VERSION = 'v17（2026-10-12）';
 function getRole() { try { return localStorage.getItem('swing-coach-role'); } catch { return null; } }
 function isTeacher() { return getRole() === 'teacher'; }
 function setRole(role) {
@@ -1680,7 +1680,7 @@ function csvDownload(name, rows) {
 const GROUP_ROWS = [
   ['學生人數', (g) => g.n],
   ['已綁定帳號', (g) => g.bound],
-  ['有練習人數', (g) => g.active],
+  ['有練習人數（比對或日誌）', (g) => g.active],
   ['近 7 天有練習', (g) => g.active7],
   ['比對總次數', (g) => g.totalAnalyses],
   ['每人比對次數', (g) => fmtMS(g.analyses)],
@@ -1690,6 +1690,13 @@ const GROUP_ROWS = [
   ['第一次分數', (g) => fmtMS(g.firstScore)],
   ['最近一次分數', (g) => fmtMS(g.lastScore)],
   ['進步分數（最近 − 第一次）', (g) => fmtMS(g.gain)],
+  ['練習日誌總筆數', (g) => g.totalJournals ?? 0],
+  ['每人日誌筆數', (g) => fmtMS(g.journals)],
+  ['日誌練習時間合計（分，自填）', (g) => g.totalJMinutes ?? 0],
+  ['每人日誌練習時間（分，自填）', (g) => fmtMS(g.jMinutes)],
+  ['每人日誌揮拍次數（自填）', (g) => fmtMS(g.jReps)],
+  ['每人練習次數（比對＋日誌）', (g) => fmtMS(g.sessions)],
+  ['每人練習時間（App＋日誌，分）', (g) => fmtMS(g.allMinutes)],
 ];
 
 async function classStats() {
@@ -1700,7 +1707,7 @@ async function classStats() {
     return;
   }
   const body = h('div', {}, h('p', { class: 'progress-text' }, '讀取全班資料中…'));
-  show(head('全班練習統計', '資料來自 Google 試算表。組別依「學生名單」對應，學生每完成一次比對就會更新。'), body);
+  show(head('全班練習統計', '資料來自 Google 試算表。組別依「學生名單」對應，學生每完成一次比對或送出一筆練習日誌就會更新。'), body);
   let data;
   try { data = await TR.teacherSummary({ from: statsFrom, to: statsTo }); }
   catch (e) {
@@ -1734,14 +1741,14 @@ async function classStats() {
     h('div', { class: 'table-wrap' }, h('table', { class: 'detail-table trk-groups' },
       h('thead', {}, h('tr', {}, h('th', {}, '項目'), groups.map((g) => h('th', { class: 'num ' + (g.name === '全部合併' ? 'all' : '') }, g.name)))),
       h('tbody', {}, GROUP_ROWS.map(([label, f]) => h('tr', {}, h('td', {}, label), groups.map((g) => h('td', { class: 'num ' + (g.name === '全部合併' ? 'all' : '') }, String(f(g))))))))),
-    h('p', { class: 'field-hint' }, '「M ± SD」是每位學生數值的平均與標準差。分數類只計算有分數的學生；進步分數只計算比對過兩次以上的學生。未綁定帳號的學生次數與時間以 0 計入。'),
+    h('p', { class: 'field-hint' }, '「M ± SD」是每位學生數值的平均與標準差。分數類只計算有分數的學生；進步分數只計算比對過兩次以上的學生。未綁定帳號的學生次數與時間以 0 計入。「日誌」來自對照組的「我的羽球練習日誌」App，時間與揮拍次數為學生自填；App 練習時間為「我的羽球教練」自動計時。'),
     h('div', { class: 'section-actions' },
       btn('下載組別統計（CSV）', () => csvDownload(`組別統計-${rangeText}.csv`,
         [['項目', ...groups.map((g) => g.name)], ...GROUP_ROWS.map(([label, f]) => [label, ...groups.map((g) => f(g))])]), 'secondary small'),
       btn('下載學生明細（CSV）', () => csvDownload(`學生明細-${rangeText}.csv`,
-        [['組別', '學號', '姓名', '班級', '學校信箱', '在名單中', '已綁定', '比對次數', '揮拍次數', '握拍次數', '總球數', '累計練習時間（分）', '平均分數', '最高分', '第一次分數', '最近一次分數', '進步分數', '第一次練習', '最近練習', '近 7 天次數', '近 7 天練習（分）'],
+        [['組別', '學號', '姓名', '班級', '學校信箱', '在名單中', '已綁定', '比對次數', '揮拍次數', '握拍次數', '總球數', '累計練習時間（分）', '平均分數', '最高分', '第一次分數', '最近一次分數', '進步分數', '第一次練習', '最近練習', '近 7 天次數', '近 7 天練習（分）', '日誌筆數', '日誌練習時間（分，自填）', '日誌揮拍次數（自填）', '練習次數（比對＋日誌）', '練習時間合計（分）'],
           ...all.map((s) => [s.group, s.studentId, s.name, s.className, s.email, s.inRoster ? '是' : '否', s.bound ? '是' : '否', s.analyses, s.swings, s.grips, s.shots, s.minutes, s.avg, s.best, s.firstScore, s.lastScore, s.gain,
-            s.first ? fmtD.format(new Date(s.first)) : '', s.last ? fmtD.format(new Date(s.last)) : '', s.weekCount, s.weekMinutes])]), 'secondary small')));
+            s.first ? fmtD.format(new Date(s.first)) : '', s.last ? fmtD.format(new Date(s.last)) : '', s.weekCount, s.weekMinutes, s.journals ?? 0, s.jMinutes ?? 0, s.jReps ?? 0, s.sessions ?? s.analyses, s.allMinutes ?? s.minutes])]), 'secondary small')));
 
   // 學生列表
   const tableBox = h('div');
@@ -1750,14 +1757,14 @@ async function classStats() {
     if (statsIdle) list = list.filter((s) => !s.weekCount);
     const by = {
       last: (a, b) => (b.last || '').localeCompare(a.last || ''),
-      count: (a, b) => b.analyses - a.analyses,
-      minutes: (a, b) => b.minutes - a.minutes,
+      count: (a, b) => (b.sessions ?? b.analyses) - (a.sessions ?? a.analyses),
+      minutes: (a, b) => (b.allMinutes ?? b.minutes) - (a.allMinutes ?? a.minutes),
       avg: (a, b) => (b.avg ?? -1) - (a.avg ?? -1),
       id: (a, b) => String(a.studentId).localeCompare(String(b.studentId), 'zh-TW', { numeric: true }),
     }[statsSort];
     list.sort(by);
     tableBox.replaceChildren(list.length ? h('div', { class: 'table-wrap' }, h('table', { class: 'detail-table trk-table' },
-      h('thead', {}, h('tr', {}, h('th', {}, '學生'), h('th', { class: 'num' }, '比對次數'), h('th', { class: 'num' }, '累計練習'), h('th', { class: 'num' }, '近 7 天'), h('th', { class: 'num' }, '平均／進步'), h('th', {}, '最近練習'))),
+      h('thead', {}, h('tr', {}, h('th', {}, '學生'), h('th', { class: 'num' }, '練習次數'), h('th', { class: 'num' }, '累計練習'), h('th', { class: 'num' }, '近 7 天'), h('th', { class: 'num' }, '平均／進步'), h('th', {}, '最近練習'))),
       h('tbody', {}, list.map((s) => h('tr', { class: s.weekCount ? '' : 'idle' },
         h('td', { class: 'trk-who' },
           h('b', {}, s.name || '（未填姓名）'), ' ',
@@ -1765,8 +1772,8 @@ async function classStats() {
           s.bound ? null : h('span', { class: 'chip sev-low' }, '未綁定帳號'),
           s.inRoster ? null : h('span', { class: 'chip sev-low' }, '不在名單'),
           h('div', { class: 'detail' }, [s.className, s.studentId].filter(Boolean).join('｜') || s.email)),
-        h('td', { class: 'num', 'data-label': '比對次數' }, `${s.analyses}`, h('div', { class: 'detail' }, `揮拍 ${s.swings}・握拍 ${s.grips}`)),
-        h('td', { class: 'num', 'data-label': '累計練習' }, fmtMin(s.minutes)),
+        h('td', { class: 'num', 'data-label': '練習次數' }, `${s.sessions ?? s.analyses}`, h('div', { class: 'detail' }, s.journals ? `比對 ${s.analyses}・日誌 ${s.journals}` : `揮拍 ${s.swings}・握拍 ${s.grips}`)),
+        h('td', { class: 'num', 'data-label': '累計練習' }, fmtMin(s.allMinutes ?? s.minutes), s.journals ? h('div', { class: 'detail' }, `日誌自填 ${fmtMin(s.jMinutes)}・${s.jReps} 下`) : null),
         h('td', { class: 'num', 'data-label': '近 7 天' }, `${s.weekCount} 次`, h('div', { class: 'detail' }, fmtMin(s.weekMinutes))),
         h('td', { class: 'num', 'data-label': '平均／進步' }, s.avg == null ? '—' : `${s.avg}`, h('div', { class: 'detail' }, s.gain == null ? '' : `${s.gain > 0 ? '+' : ''}${s.gain} 分`)),
         h('td', { 'data-label': '最近練習' }, s.last ? fmtD.format(new Date(s.last)) : (s.bound ? '尚未練習' : '尚未綁定')))))))
@@ -1787,7 +1794,7 @@ async function classStats() {
     h('div', { class: 'trk-filters' },
       sel([['', '全部組別'], ...groupNames.map((g) => [g, g])], statsGroup, (v) => { statsGroup = v; }, '組別'),
       sel([['', '全部班級'], ...classes.map((c) => [c, c])], classes.includes(statsClass) ? statsClass : '', (v) => { statsClass = v; }, '班級'),
-      sel([['last', '依最近練習'], ['count', '依比對次數'], ['minutes', '依練習時間'], ['avg', '依平均分數'], ['id', '依學號']], statsSort, (v) => { statsSort = v; }, '排序'),
+      sel([['last', '依最近練習'], ['count', '依練習次數'], ['minutes', '依練習時間'], ['avg', '依平均分數'], ['id', '依學號']], statsSort, (v) => { statsSort = v; }, '排序'),
       h('label', { class: 'trk-check' }, idleCb, '只看 7 天內沒有練習')),
     tableBox,
     h('p', { class: 'field-hint' }, `學生名單：${data.rosterCount} 人。更新時間：${fmtD.format(new Date(data.generatedAt))}。練習時間只計算學生在練習畫面、有操作時的時間。`),

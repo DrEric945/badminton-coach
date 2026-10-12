@@ -1,0 +1,73 @@
+/* 我的羽球練習日誌：沿用「我的羽球教練」的版面，改用淡粉色系（校徽顏色不變） */
+:root {
+  --court: #A23E5E;
+  --court-deep: #7A2945;
+  --paper: #FBF0F3;
+  --rule: #E8CCD5;
+  --line: #FFF8FA;
+}
+.topbar { background: var(--paper); }
+.role-badge.student { background: #F6D6E0; color: var(--court-deep); }
+.role-card:hover { background: #F7E3E9; }
+.chip { background: #F1DDE3; }
+.chip.swing { background: #F6D6E0; color: var(--court-deep); }
+.note-box { background: #F8E4EA; border-left-color: var(--court); }
+.note-box.warn { background: #FBEFD0; border-color: var(--teacher); }
+.progress { background: #EBD3DA; }
+dialog.sheet::backdrop { background: rgba(122, 41, 69, 0.45); }
+.tpl-thumb { background: #E7BFCC; }
+
+/* 表單欄位：數字、日期、多行文字 */
+.field input[type="number"], .field input[type="date"], .field textarea {
+  min-height: 46px; padding: 8px 12px; border: 2px solid var(--rule); border-radius: var(--radius-s); background: var(--surface); width: 100%;
+}
+.field textarea { resize: vertical; line-height: 1.5; }
+.field input[type="number"]:focus, .field input[type="date"]:focus, .field textarea:focus { border-color: var(--court); outline: none; }
+.field input[type="date"] { -webkit-appearance: none; appearance: none; }
+.jr-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.field[hidden] { display: none; }
+textarea { font: inherit; color: inherit; }
+
+/* 歡迎步驟 */
+.jr-steps { list-style: none; counter-reset: s; padding: 0; margin: 0 0 8px; display: grid; gap: 10px; }
+.jr-steps li { counter-increment: s; display: grid; grid-template-columns: 40px 1fr; gap: 2px 12px; align-items: start; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 14px 16px; }
+.jr-steps li::before { content: counter(s); grid-row: span 2; width: 36px; height: 36px; border-radius: 50%; background: var(--court); color: var(--line); display: grid; place-items: center; font-family: var(--font-num); font-size: 20px; font-weight: 700; }
+.jr-steps b { font-size: 17px; }
+.jr-steps span { color: var(--muted); font-size: 15px; }
+
+/* 示範播放 */
+.jr-stage { background: #2B1720; }
+.jr-stage::before, .jr-stage::after { display: none; }
+.jr-snaps { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.jr-snaps img { width: 100%; border-radius: var(--radius-s); background: #2B1720; }
+.jr-stage + .field, .jr-snaps + .field { margin-top: 14px; }
+main > .field:has(.seg) { margin-top: 14px; }
+
+/* 照片 */
+.jr-photo-empty { border: 2px dashed var(--rule); border-radius: var(--radius-m); padding: 26px 16px; text-align: center; color: var(--muted); background: var(--surface); }
+.jr-photo-has { display: grid; gap: 6px; justify-items: start; }
+.jr-photo-has img { max-height: 280px; width: auto; max-width: 100%; border-radius: var(--radius-m); border: 1px solid var(--rule); }
+.btn.small { min-height: 38px; padding: 0 14px; font-size: 14px; }
+
+/* 送出完成 */
+.jr-done { display: grid; grid-template-columns: 120px 1fr; gap: 16px; align-items: center; background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 14px; margin-bottom: 14px; }
+.jr-done img { width: 120px; height: 120px; object-fit: cover; border-radius: var(--radius-s); }
+.jr-big { font-size: 15px; color: var(--muted); }
+.jr-big b { font-family: var(--font-num); font-size: 40px; color: var(--court); line-height: 1.1; }
+
+/* 練習紀錄 */
+.jr-kpis { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.jr-kpis > div { display: block; }
+.jr-kpis .trk-k { display: block; }
+.jr-kpis b { font-family: var(--font-num); font-size: 34px; color: var(--court); }
+.jr-kpis .detail { color: var(--muted); font-size: 14px; }
+.jr-list { display: flex; flex-direction: column; border-top: 1px solid var(--rule); }
+.jr-row { display: grid; grid-template-columns: 76px 1fr auto; gap: 14px; align-items: center; padding: 12px 0; border: 0; border-bottom: 1px solid var(--rule); background: none; text-align: left; cursor: pointer; width: 100%; }
+.jr-row .chip { display: inline-block; margin-top: 4px; }
+.jr-row:hover .tpl-name { color: var(--court); }
+.jr-detail-photo { width: 100%; max-height: 70vh; object-fit: contain; border-radius: var(--radius-m); background: #2B1720; }
+
+/* 三個分頁平均分配 */
+.tabbar { grid-template-columns: repeat(3, 1fr); }
+.jr-done.no-photo { grid-template-columns: 1fr; }
+.jr-private { color: var(--court-deep); }
