@@ -460,3 +460,15 @@ dialog.sheet::backdrop { background: rgba(20, 56, 86, 0.5); }
 .trk-pair { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 14px 0 6px; padding: 12px 14px; border: 2px dashed var(--rule); border-radius: var(--radius-s); background: var(--surface); }
 .trk-pair .trk-k { display: block; }
 .trk-pair-code { font-family: var(--font-num); font-size: 28px; letter-spacing: 0.18em; color: var(--court); user-select: all; -webkit-user-select: all; }
+
+/* 綁定完成 */
+.trk-linked { text-align: center; padding: 28px 8px 8px; display: grid; justify-items: center; gap: 4px; }
+.trk-linked h1 { font-size: 28px; margin: 6px 0 10px; }
+.trk-linked b { font-size: 19px; }
+.trk-linked-mail { color: var(--muted); }
+.trk-linked .lede { margin-top: 14px; }
+.trk-check { width: 84px; height: 84px; color: var(--good); animation: trk-pop 0.35s ease-out; }
+.trk-check svg { width: 100%; height: 100%; }
+@keyframes trk-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .trk-check { animation: none; } }
+.trk-return { background: var(--surface); border: 2px solid var(--court); border-radius: var(--radius-s); padding: 6px 10px; margin: 4px 0; list-style-position: inside; }

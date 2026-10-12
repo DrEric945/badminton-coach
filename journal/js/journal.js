@@ -5,7 +5,7 @@ import * as L from '../../js/library.js';
 import * as DB from './jstore.js';
 import { $, h, toast, field, groupField, segmented } from '../../js/ui.js';
 
-const APP_VERSION = 'j2（2026-10-12）';
+const APP_VERSION = 'j3（2026-10-12）';
 const NS = 'swing-journal';
 const lsGet = (k, d = null) => { try { const v = localStorage.getItem(`${NS}-${k}`); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(`${NS}-${k}`); else localStorage.setItem(`${NS}-${k}`, JSON.stringify(v)); } catch { /* 無痕模式 */ } };
@@ -433,11 +433,39 @@ async function copyText(text, okMsg) {
 
 // 綁定表單送出後，背景完成綁定時呼叫
 let pairErrorBox = null;
+// 切回 App 的方法：依手機與開啟方式給不同說明
+function returnHint() {
+  const ua = navigator.userAgent;
+  const ios = /iPhone|iPad|iPod/.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  const android = /Android/.test(ua);
+  const standalone = (window.matchMedia && matchMedia('(display-mode: standalone)').matches) || navigator.standalone === true;
+  if (ios && standalone) return '看到「已送出」後，從螢幕最下方往上滑一點停住（有 Home 鍵的 iPhone 按兩下 Home 鍵），點選「練習日誌」回到這裡。';
+  if (ios) return '看到「已送出」後，關閉表單分頁，或點 Safari 下方的「分頁」按鈕切回這個分頁。';
+  if (android && standalone) return '看到「已送出」後，按手機的「最近使用的應用程式」鍵（或從螢幕底部往上滑停住），點選「練習日誌」回到這裡。';
+  if (android) return '看到「已送出」後，按瀏覽器右上角的分頁數字，切回這個分頁。';
+  return '看到「已送出」後，關閉表單分頁，回到這個分頁。';
+}
+const CHECK_SVG = '<svg viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="22" fill="currentColor"/><path d="M14 24.5l7 7 13-14" fill="none" stroke="#fff" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+// 綁定成功：顯示明顯的完成畫面，讓剛切回來的學生知道已經好了
+function linkedScreen() {
+  const a = TR.account();
+  if (!a) return accountScreen({});
+  document.querySelectorAll('dialog[open]').forEach((d) => d.close());
+  const tst = $('#toast'); if (tst) tst.classList.remove('show');
+  if (navigator.vibrate) { try { navigator.vibrate(80); } catch { /* 不支援 */ } }
+  show(
+    h('section', { class: 'trk-linked' },
+      h('div', { class: 'trk-check', html: CHECK_SVG }),
+      h('h1', {}, '綁定完成'),
+      h('b', {}, a.name), h('div', { class: 'trk-linked-mail' }, a.email),
+      h('p', { class: 'lede' }, '之後每次送出的練習日誌都會自動交給老師。這支手機之後不用再綁定。')),
+    h('div', { class: 'btn-row one' }, btn('開始寫日誌', () => { location.hash = 'log'; route(); })),
+    h('div', { class: 'section-actions', style: { justifyContent: 'center', marginTop: '10px' } }, btn('確認班級與學號', () => accountScreen({}), 'quiet')),
+  );
+}
 function onPairLinked() {
-  toast('已綁定學校帳號');
   syncPending();
-  if (document.querySelector('.trk-steps')) accountScreen({});
-  else if (location.hash.slice(1) === 'history') route();
+  linkedScreen();
 }
 function onPairError(e) {
   // 配對碼已失效，重新顯示綁定畫面（會產生新的配對碼），再顯示錯誤原因
@@ -496,9 +524,8 @@ async function accountScreen({ first = false } = {}) {
   const gbtn = h('div', { class: 'trk-gbtn' }, h('p', { class: 'field-hint' }, '載入 Google 登入…'));
   const codeIn = h('input', { type: 'text', inputmode: 'numeric', maxlength: 6, placeholder: '6 位數字', autocomplete: 'one-time-code' });
   const done = () => {
-    toast('已綁定學校帳號');
     syncPending();
-    accountScreen({});
+    linkedScreen();
   };
   const cfg = TR.config() || {};
   const bindHref = cfg.bindUrl ? cfg.bindUrl + (cfg.bindUrl.includes('?') ? '&' : '?') + 'action=bind' : '';
@@ -550,7 +577,7 @@ async function accountScreen({ first = false } = {}) {
     const open = h('a', { class: 'btn', href, target: '_blank', rel: 'noopener' }, '開啟綁定表單');
     open.addEventListener('click', () => {
       TR.markFormOpened();
-      formStatus.replaceChildren(h('p', { class: 'field-hint trk-wait' }, '等待表單送出… 送出後回到這個畫面，會自動完成綁定。'));
+      formStatus.replaceChildren(h('p', { class: 'field-hint trk-wait' }, '等待表單送出… 送出後切回這個 App，會自動完成綁定。'));
     });
     formBox.replaceChildren(
       h('h2', {}, '用學校帳號送出綁定表單'),
@@ -559,7 +586,7 @@ async function accountScreen({ first = false } = {}) {
         h('li', {}, '確認表單上方顯示的是你的學校帳號（＠' + ((cfg.domain || '').split(',')[0].trim() || '學校網域') + '），不是的話按「切換帳號」。'),
         h('li', {}, '「配對碼」通常已經自動填好；如果是空白，請按下面的「複製配對碼」，回到表單長按貼上（或照著輸入）。'),
         h('li', {}, '按「提交」。'),
-        h('li', {}, '回到這個 App，幾秒內就會自動完成綁定。')),
+        h('li', { class: 'trk-return' }, h('b', {}, '回到這個 App：'), returnHint(), '幾秒內就會出現「綁定完成」。')),
       h('div', { class: 'trk-pair' },
         h('div', {}, h('span', { class: 'trk-k' }, '你的配對碼'), h('b', { class: 'trk-pair-code' }, TR.pairCode())),
         btn('複製配對碼', () => { TR.markFormOpened(); copyText(TR.pairCode(), '已複製配對碼，回到表單貼上'); }, 'secondary small')),
