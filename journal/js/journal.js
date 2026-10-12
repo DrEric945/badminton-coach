@@ -5,7 +5,7 @@ import * as L from '../../js/library.js';
 import * as DB from './jstore.js';
 import { $, h, toast, field, groupField, segmented } from '../../js/ui.js';
 
-const APP_VERSION = 'j3（2026-10-12）';
+const APP_VERSION = 'j4（2026-10-12）';
 const NS = 'swing-journal';
 const lsGet = (k, d = null) => { try { const v = localStorage.getItem(`${NS}-${k}`); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { if (v == null) localStorage.removeItem(`${NS}-${k}`); else localStorage.setItem(`${NS}-${k}`, JSON.stringify(v)); } catch { /* 無痕模式 */ } };
