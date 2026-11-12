@@ -472,3 +472,29 @@ dialog.sheet::backdrop { background: rgba(20, 56, 86, 0.5); }
 @keyframes trk-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .trk-check { animation: none; } }
 .trk-return { background: var(--surface); border: 2px solid var(--court); border-radius: var(--radius-s); padding: 6px 10px; margin: 4px 0; list-style-position: inside; }
+
+/* 自評：看系統評分前先為自己打分數 */
+.self-media { margin: 4px 0 14px; }
+.self-box { background: var(--surface); border: 1px solid var(--rule); border-radius: var(--radius-m); padding: 16px 16px 10px; }
+.self-head { display: flex; align-items: flex-end; gap: 14px; min-height: 76px; }
+.self-num { font-family: var(--font-num); font-weight: 700; font-size: 80px; line-height: 0.85; color: var(--student); min-width: 1.6em; }
+.self-word { font-size: 17px; font-weight: 700; padding-bottom: 6px; }
+.self-slider { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; margin-top: 10px; }
+.self-range { accent-color: var(--student); height: 40px; }
+.self-range.untouched { opacity: 0.55; }
+.self-step { width: 48px; height: 44px; border-radius: var(--radius-s); border: 2px solid var(--rule); background: var(--surface); font-family: var(--font-num); font-size: 18px; font-weight: 600; cursor: pointer; }
+.self-bands { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 10px; }
+.self-bands span { border: 1px solid var(--rule); border-radius: var(--radius-s); padding: 6px 10px; font-size: 14px; cursor: pointer; background: var(--surface); }
+.self-bands span b { font-family: var(--font-num); font-size: 16px; margin-right: 6px; }
+.self-bands span.on { border-color: var(--student); background: #FFE9E6; font-weight: 700; }
+.self-compare { margin-top: 12px; background: var(--surface); border: 1px solid var(--rule); border-left: 4px solid var(--student); border-radius: var(--radius-s); padding: 12px 14px; }
+.sc-cells { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.sc-cells span { display: block; font-size: 13px; color: var(--muted); line-height: 1.3; }
+.sc-cells b { font-family: var(--font-num); font-size: 34px; line-height: 1.1; }
+.sc-cells .close b { color: var(--good); }
+.self-compare p { margin: 8px 0 0; font-size: 15px; }
+.history-scores { text-align: right; }
+.history-cap { font-size: 12px; color: var(--muted); line-height: 1.2; }
+.history-self { font-size: 14px; color: var(--student); font-weight: 700; margin-top: 2px; }
+.self-num.blank { color: var(--rule); }
+.self-word { flex: 1; }
