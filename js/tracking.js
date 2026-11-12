@@ -257,9 +257,9 @@ function flushTime(min = 60) {
 }
 
 // 完成一次比對時呼叫
-export function logAnalysis({ type, template, score, shots, videoSec, topIssue }) {
+export function logAnalysis({ type, template, score, selfScore, shots, videoSec, topIssue }) {
   if (!isStudent()) return;
-  enqueue({ kind: 'analysis', type, template, score: Math.round(score), shots, videoSec: Math.round((videoSec || 0) * 10) / 10, topIssue: topIssue || '', practiceSec: takeSeconds() });
+  enqueue({ kind: 'analysis', type, template, score: Math.round(score), selfScore: selfScore == null ? '' : Math.round(selfScore), shots, videoSec: Math.round((videoSec || 0) * 10) / 10, topIssue: topIssue || '', practiceSec: takeSeconds() });
   flush();
 }
 

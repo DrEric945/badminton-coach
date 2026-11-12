@@ -15,7 +15,7 @@ const HANDS = [['R', '右手'], ['L', '左手']];
 const HAND_TEXT = { R: '右手持拍', L: '左手持拍' };
 const S = Object.assign({ quality: 'full', fps: 30, hand: 'R', facing: 'user', recSec: 6 }, safeJSON(localStorage.getItem('swing-coach-settings')));
 function safeJSON(s) { try { return JSON.parse(s) || {}; } catch { return {}; } }
-const APP_VERSION = 'v18（2026-10-12）';
+const APP_VERSION = 'v19（2026-11-12）';
 function getRole() { try { return localStorage.getItem('swing-coach-role'); } catch { return null; } }
 function isTeacher() { return getRole() === 'teacher'; }
 function setRole(role) {
@@ -213,8 +213,70 @@ function studentAnalyze(tpl, blob) {
   trimAnalyze(blob, {
     title: '選取你的揮拍片段',
     back: () => swingPrep(tpl),
-    onFrames: (d) => swingResult(tpl, { frames: d.frames, ar: d.ar, blob, hand: S.hand }),
+    onFrames: (d) => {
+      const stu = { frames: d.frames, ar: d.ar, blob, hand: S.hand };
+      selfRate({
+        tpl, back: () => swingPrep(tpl), media: () => selfRateVideos(tpl, blob),
+        onDone: (self) => swingResult(tpl, stu, { self }),
+      });
+    },
   });
+}
+
+// ───────── 自評：看系統評分之前，先為自己打分數 ─────────
+const SELF_BANDS = [[90, 100, '非常接近示範'], [75, 89, '大致正確'], [55, 74, '有幾處需要調整'], [0, 54, '和示範差異較大']];
+function selfRate({ tpl, back, media, onDone }) {
+  practiceScreen();
+  let val = null;
+  const num = h('div', { class: 'self-num blank' }, '?');
+  const word = h('div', { class: 'self-word' }, '拖動滑桿，選出你給自己的分數');
+  const range = h('input', { type: 'range', class: 'self-range untouched', min: 0, max: 100, step: 1, value: 50, 'aria-label': '自評分數（0 到 100）' });
+  const send = btn('送出自評，看系統評分', () => { if (val == null) return; send.disabled = true; onDone(val); }, '', 'go');
+  send.disabled = true;
+  const set = (v) => {
+    val = Math.max(0, Math.min(100, Math.round(v)));
+    range.value = val; range.classList.remove('untouched');
+    num.classList.remove('blank'); num.textContent = String(val); word.textContent = verdict(val);
+    bands.querySelectorAll('span').forEach((s) => s.classList.toggle('on', val >= +s.dataset.lo && val <= +s.dataset.hi));
+    send.disabled = false;
+  };
+  range.addEventListener('input', () => set(+range.value));
+  const step = (d, label) => h('button', { class: 'self-step', type: 'button', 'aria-label': label, onclick: () => set((val ?? +range.value) + d) }, d > 0 ? '+1' : '−1');
+  const bands = h('div', { class: 'self-bands' }, SELF_BANDS.map(([lo, hi, t]) => h('span', { 'data-lo': lo, 'data-hi': hi, onclick: () => set(Math.round((lo + hi) / 2)) }, h('b', {}, `${lo}–${hi}`), t)));
+  show(
+    head('先為自己打分數', tpl.name, back),
+    h('p', {}, '動作已經擷取完成。看系統評分之前，先對照示範想一想：這次你做得怎麼樣？用 0 到 100 分為自己打分數，100 分代表和示範一模一樣。'),
+    media ? media() : null,
+    h('section', { class: 'self-box', 'aria-label': '自評分數' },
+      h('div', { class: 'self-head' }, num, word),
+      h('div', { class: 'self-slider' }, step(-1, '減 1 分'), range, step(1, '加 1 分'))),
+    bands,
+    h('p', { class: 'field-hint' }, '送出後就不能修改。系統評分出來後，比一比你的判斷和系統差多少，這也是練習「看懂自己動作」的一部分。'),
+    h('div', { class: 'btn-row one' }, send),
+  );
+}
+// 自評時並排看示範和自己的影片（循環播放）
+function selfRateVideos(tpl, blob) {
+  const mk = (b, tag, cls) => {
+    if (!b) return null;
+    const url = URL.createObjectURL(b);
+    onLeaveLater(() => URL.revokeObjectURL(url));
+    return h('div', { class: 'stage' }, h('video', { class: 'stage-media', src: url, muted: true, playsInline: true, loop: true, autoplay: true, controls: true }), h('div', { class: 'stage-tag' + cls }, tag));
+  };
+  return h('div', { class: 'pair self-media' }, mk(tpl.video, '示範', ''), mk(blob, '你', ' student'));
+}
+// 自評與系統評分對照
+function selfCompare(self, sys, multi) {
+  const gap = self - fmtScore(sys);
+  const msg = Math.abs(gap) <= 5 ? '你對自己動作的判斷和系統很接近，繼續用這樣的眼光觀察自己。'
+    : gap > 0 ? `你給自己的分數比系統高 ${gap} 分。對照下面「需要調整的地方」，找找看哪裡和你想的不一樣。`
+      : `你比系統嚴格 ${-gap} 分，其實你做得比自己想的好。看看下面「做得好的地方」。`;
+  return h('section', { class: 'self-compare', 'aria-label': '自評與系統評分對照' },
+    h('div', { class: 'sc-cells' },
+      h('div', {}, h('span', {}, '你的自評'), h('b', {}, String(self))),
+      h('div', {}, h('span', {}, multi ? '系統評分（各球平均）' : '系統評分'), h('b', {}, String(fmtScore(sys)))),
+      h('div', { class: Math.abs(gap) <= 5 ? 'close' : '' }, h('span', {}, '差距'), h('b', {}, (gap > 0 ? '+' : '') + gap))),
+    h('p', {}, msg));
 }
 
 // ───────── 相機錄影 ─────────
@@ -496,15 +558,18 @@ async function swingResult(tpl, stu, opts = {}) {
     { label: '揮拍軌跡', score: R.trajScore },
     { label: '速度與節奏', score: R.speedScore },
   ];
+  if (opts.self != null) stu._self = opts.self;
+  const self = stu._self ?? null;
+  const sysTotal = multi ? MS.summary.avg : R.total;
   if (!opts.noSave) DB.put('history', {
     id: DB.uid(), type: 'swing', tplId: tpl.id, tplName: tpl.name, date: Date.now(),
-    total: multi ? MS.summary.avg : R.total, shots: MS.shots.length,
+    total: sysTotal, selfScore: self, shots: MS.shots.length,
     parts: parts.map((p) => ({ label: p.label, score: p.score })),
     tips: multi ? MS.summary.issues.slice(0, 3).map((i) => `${i.part}（${i.count}/${MS.summary.count} 球）`) : R.improve.slice(0, 3).map((n) => n.text),
     frames: stu.frames, hand: stu.hand, ar: stu.ar, fps: stu.fps || S.fps,
   }).catch(console.warn);
   if (!opts.noSave) TR.logAnalysis({
-    type: 'swing', template: tpl.name, score: multi ? MS.summary.avg : R.total, shots: MS.shots.length,
+    type: 'swing', template: tpl.name, score: sysTotal, selfScore: self, shots: MS.shots.length,
     videoSec: stu.frames.length ? stu.frames[stu.frames.length - 1].t - stu.frames[0].t : 0,
     topIssue: multi ? (MS.summary.issues[0] ? `${MS.summary.issues[0].part}（${MS.summary.issues[0].count}/${MS.summary.count} 球）` : '') : (R.improve[0] ? R.improve[0].text : ''),
   });
@@ -597,6 +662,7 @@ async function swingResult(tpl, stu, opts = {}) {
       btn('進入動作分析3D實驗室', () => lab3dScreen(tpl, stu, MS, shotIdx, () => swingResult(tpl, stu, { noSave: true, shot: shotIdx })), '', 'cube'),
       h('p', { class: 'field-hint' }, '用立體骨架並列比較教師（藍）和學生（橘）的動作。較舊的手機可以直接看下面的一般結果。')),
     scoreboard(R.total, multi ? `第 ${shotIdx + 1} 球：${verdict(R.total)}` : verdict(R.total), parts),
+    self != null ? selfCompare(self, sysTotal, multi) : null,
     h('h2', {}, '需要調整的地方'), notesList(R.improve, false),
     plan.length ? [h('h2', {}, '練習方法'), practiceList(plan)] : null,
     h('h2', {}, '做得好的地方'), notesList(R.good, true),
@@ -656,7 +722,11 @@ function gripPrep(tpl) {
     groupField('你的持拍手', segmented(HANDS, S.hand, (v) => { S.hand = v; saveSettings(); }, '你的持拍手')),
     h('div', { class: 'btn-row one' }, btn('開始握拍比對', () => gripCapture({
       title: '握拍比對', tpl, hand: S.hand, role: 'student', back: () => gripPrep(tpl),
-      onDone: (data) => gripResult(tpl, data),
+      onDone: (data) => selfRate({
+        tpl, back: () => gripPrep(tpl),
+        media: () => h('div', { class: 'pair self-media' }, snapCanvas(tpl.grip.views.back, tpl.hand, '--teacher', '示範'), snapCanvas(data.views.back, data.hand, '--student', '你')),
+        onDone: (self) => gripResult(tpl, data, { self }),
+      }),
     }), '', 'camera')),
   );
 }
@@ -893,15 +963,16 @@ function snapCanvas(view, hand, color, tag) {
   return h('div', { class: 'stage' }, im, c, h('div', { class: 'stage-tag' + (tag === '你' ? ' student' : '') }, tag));
 }
 
-function gripResult(tpl, data) {
+function gripResult(tpl, data, opts = {}) {
   practiceScreen();
   let R;
   try { R = A.compareGrip(tpl.grip, data); } catch (e) { return errorScreen('無法比對', e.message, () => gripPrep(tpl)); }
+  const self = opts.self ?? null;
   DB.put('history', {
     id: DB.uid(), type: 'grip', tplId: tpl.id, tplName: tpl.name, date: Date.now(),
-    total: R.total, parts: R.parts.map((p) => ({ label: p.label, score: p.score })), tips: R.improve.slice(0, 3).map((n) => n.text),
+    total: R.total, selfScore: self, parts: R.parts.map((p) => ({ label: p.label, score: p.score })), tips: R.improve.slice(0, 3).map((n) => n.text),
   }).catch(console.warn);
-  TR.logAnalysis({ type: 'grip', template: tpl.name, score: R.total, shots: 0, videoSec: 0, topIssue: R.improve[0] ? R.improve[0].text : '' });
+  TR.logAnalysis({ type: 'grip', template: tpl.name, score: R.total, selfScore: self, shots: 0, videoSec: 0, topIssue: R.improve[0] ? R.improve[0].text : '' });
 
   const JOINT_ROWS = [
     ['idxMCP', '食指根部彎曲'], ['idxPIP', '食指中段彎曲'], ['midMCP', '中指根部彎曲'], ['midPIP', '中指中段彎曲'],
@@ -925,6 +996,7 @@ function gripResult(tpl, data) {
   show(
     head('握拍比對結果', tpl.name, () => gripPrep(tpl)),
     scoreboard(R.total, verdict(R.total), R.parts),
+    self != null ? selfCompare(self, R.total, false) : null,
     h('h2', {}, '需要調整的地方'), notesList(R.improve, false),
     h('h2', {}, '做得好的地方'), notesList(R.good, true),
     views, rotEl,
@@ -1425,7 +1497,11 @@ async function historyHome() {
           h('div', { class: 'history-meta' }, `${r.type === 'swing' ? '揮拍' : '握拍'}，${fmt.format(new Date(r.date))}`),
           r.tips && r.tips[0] ? h('div', { class: 'history-tip' }, r.tips[0]) : null,
           r.type === 'swing' && r.frames ? h('div', { style: { marginTop: '8px' } }, btn('打開 3D 實驗室', () => reopenLab(r), 'secondary small', 'cube')) : null),
-        h('div', { class: 'history-score' }, fmtScore(r.total)))),
+        r.selfScore != null
+          ? h('div', { class: 'history-scores' },
+            h('div', { class: 'history-cap' }, '系統'), h('div', { class: 'history-score' }, fmtScore(r.total)),
+            h('div', { class: 'history-self' }, `自評 ${r.selfScore}`))
+          : h('div', { class: 'history-score' }, fmtScore(r.total)))),
       h('div', { class: 'section-actions', style: { marginTop: '20px' } }, btn('清除所有紀錄', async () => {
         if (!confirm('要清除所有練習紀錄嗎？')) return;
         await DB.clear('history'); historyHome();
@@ -1717,6 +1793,9 @@ const GROUP_ROWS = [
   ['第一次分數', (g) => fmtMS(g.firstScore)],
   ['最近一次分數', (g) => fmtMS(g.lastScore)],
   ['進步分數（最近 − 第一次）', (g) => fmtMS(g.gain)],
+  ['每人平均自評分數', (g) => fmtMS(g.selfAvg)],
+  ['自評 − 系統分數（正數＝高估）', (g) => fmtMS(g.selfGap)],
+  ['自評與系統分數差距（絕對值）', (g) => fmtMS(g.selfAbsGap)],
   ['練習日誌總筆數', (g) => g.totalJournals ?? 0],
   ['每人日誌筆數', (g) => fmtMS(g.journals)],
   ['日誌練習時間合計（分，自填）', (g) => g.totalJMinutes ?? 0],
@@ -1768,13 +1847,13 @@ async function classStats() {
     h('div', { class: 'table-wrap' }, h('table', { class: 'detail-table trk-groups' },
       h('thead', {}, h('tr', {}, h('th', {}, '項目'), groups.map((g) => h('th', { class: 'num ' + (g.name === '全部合併' ? 'all' : '') }, g.name)))),
       h('tbody', {}, GROUP_ROWS.map(([label, f]) => h('tr', {}, h('td', {}, label), groups.map((g) => h('td', { class: 'num ' + (g.name === '全部合併' ? 'all' : '') }, String(f(g))))))))),
-    h('p', { class: 'field-hint' }, '「M ± SD」是每位學生數值的平均與標準差。分數類只計算有分數的學生；進步分數只計算比對過兩次以上的學生。未綁定帳號的學生次數與時間以 0 計入。「日誌」來自對照組的「我的羽球練習日誌」App，時間與揮拍次數為學生自填；App 練習時間為「我的羽球教練」自動計時。'),
+    h('p', { class: 'field-hint' }, '「M ± SD」是每位學生數值的平均與標準差。分數類只計算有分數的學生；進步分數只計算比對過兩次以上的學生。自評類只計算有自評的學生，「自評 − 系統」為正表示學生高估自己，「差距（絕對值）」越小表示自我判斷越準。未綁定帳號的學生次數與時間以 0 計入。「日誌」來自對照組的「我的羽球練習日誌」App，時間與揮拍次數為學生自填；App 練習時間為「我的羽球教練」自動計時。'),
     h('div', { class: 'section-actions' },
       btn('下載組別統計（CSV）', () => csvDownload(`組別統計-${rangeText}.csv`,
         [['項目', ...groups.map((g) => g.name)], ...GROUP_ROWS.map(([label, f]) => [label, ...groups.map((g) => f(g))])]), 'secondary small'),
       btn('下載學生明細（CSV）', () => csvDownload(`學生明細-${rangeText}.csv`,
-        [['組別', '學號', '姓名', '班級', '學校信箱', '在名單中', '已綁定', '比對次數', '揮拍次數', '握拍次數', '總球數', '累計練習時間（分）', '平均分數', '最高分', '第一次分數', '最近一次分數', '進步分數', '第一次練習', '最近練習', '近 7 天次數', '近 7 天練習（分）', '日誌筆數', '日誌練習時間（分，自填）', '日誌揮拍次數（自填）', '練習次數（比對＋日誌）', '練習時間合計（分）'],
-          ...all.map((s) => [s.group, s.studentId, s.name, s.className, s.email, s.inRoster ? '是' : '否', s.bound ? '是' : '否', s.analyses, s.swings, s.grips, s.shots, s.minutes, s.avg, s.best, s.firstScore, s.lastScore, s.gain,
+        [['組別', '學號', '姓名', '班級', '學校信箱', '在名單中', '已綁定', '比對次數', '揮拍次數', '握拍次數', '總球數', '累計練習時間（分）', '平均分數', '最高分', '第一次分數', '最近一次分數', '進步分數', '自評次數', '平均自評分數', '自評 − 系統（平均）', '自評差距（絕對值平均）', '第一次練習', '最近練習', '近 7 天次數', '近 7 天練習（分）', '日誌筆數', '日誌練習時間（分，自填）', '日誌揮拍次數（自填）', '練習次數（比對＋日誌）', '練習時間合計（分）'],
+          ...all.map((s) => [s.group, s.studentId, s.name, s.className, s.email, s.inRoster ? '是' : '否', s.bound ? '是' : '否', s.analyses, s.swings, s.grips, s.shots, s.minutes, s.avg, s.best, s.firstScore, s.lastScore, s.gain, s.selfN ?? 0, s.selfAvg, s.selfGap, s.selfAbsGap,
             s.first ? fmtD.format(new Date(s.first)) : '', s.last ? fmtD.format(new Date(s.last)) : '', s.weekCount, s.weekMinutes, s.journals ?? 0, s.jMinutes ?? 0, s.jReps ?? 0, s.sessions ?? s.analyses, s.allMinutes ?? s.minutes])]), 'secondary small')));
 
   // 學生列表
@@ -1802,7 +1881,7 @@ async function classStats() {
         h('td', { class: 'num', 'data-label': '練習次數' }, `${s.sessions ?? s.analyses}`, h('div', { class: 'detail' }, s.journals ? `比對 ${s.analyses}・日誌 ${s.journals}` : `揮拍 ${s.swings}・握拍 ${s.grips}`)),
         h('td', { class: 'num', 'data-label': '累計練習' }, fmtMin(s.allMinutes ?? s.minutes), s.journals ? h('div', { class: 'detail' }, `日誌自填 ${fmtMin(s.jMinutes)}・${s.jReps} 下`) : null),
         h('td', { class: 'num', 'data-label': '近 7 天' }, `${s.weekCount} 次`, h('div', { class: 'detail' }, fmtMin(s.weekMinutes))),
-        h('td', { class: 'num', 'data-label': '平均／進步' }, s.avg == null ? '—' : `${s.avg}`, h('div', { class: 'detail' }, s.gain == null ? '' : `${s.gain > 0 ? '+' : ''}${s.gain} 分`)),
+        h('td', { class: 'num', 'data-label': '平均／進步' }, s.avg == null ? '—' : `${s.avg}`, h('div', { class: 'detail' }, [s.gain == null ? '' : `進步 ${s.gain > 0 ? '+' : ''}${s.gain} 分`, s.selfGap == null ? '' : `自評差 ${s.selfGap > 0 ? '+' : ''}${s.selfGap}`].filter(Boolean).join('・'))),
         h('td', { 'data-label': '最近練習' }, s.last ? fmtD.format(new Date(s.last)) : (s.bound ? '尚未練習' : '尚未綁定')))))))
       : h('p', { class: 'field-hint' }, statsIdle ? '這個範圍內每位學生近 7 天都有練習。' : '這個範圍內沒有學生。'));
   };
